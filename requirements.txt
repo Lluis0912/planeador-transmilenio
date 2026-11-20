@@ -1,0 +1,12 @@
+#Prohibido usar para el motor solamente:
+#dict y set
+#sorted, .sort(), min y max sobre colecciones
+#x in lista, .index() y .count() para buscar dentro de una lista
+#bisect, heapq, collections, functools y cualquier librería externa
+
+#Permitido usar:
+#list como arreglo
+#str y sus métodos
+#Recorrer con for x in lista
+#Los módulos csv, time y random
+#Fuera del motor, en el front y la conversión: cualquier librería
