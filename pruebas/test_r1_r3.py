@@ -21,22 +21,22 @@ class RedR1R3Tests(unittest.TestCase):
         with ruta_rutas.open("w", encoding="utf-8", newline="") as archivo:
             escritor = csv.writer(archivo)
             escritor.writerow(["ruta", "orden", "estacion"])
-            escritor.writerow(["A", 1, "CALLE 26"])
-            escritor.writerow(["A", 2, "AVENIDA JIMENEZ"])
-            escritor.writerow(["A", 3, "CALLE 80"])
-            escritor.writerow(["B", 1, "CALLE 45"])
-            escritor.writerow(["B", 2, "AVENIDA JIMENEZ"])
-            escritor.writerow(["B", 3, "CALLE 80"])
+            escritor.writerow(["B74-1", 1, "CALLE 26"])
+            escritor.writerow(["B74-1", 2, "AVENIDA JIMENEZ"])
+            escritor.writerow(["B74-1", 3, "CALLE 80"])
+            escritor.writerow(["D10-1", 1, "CALLE 45"])
+            escritor.writerow(["D10-1", 2, "AVENIDA JIMENEZ"])
+            escritor.writerow(["D10-1", 3, "CALLE 80"])
         ruta_horarios = Path(self.directorio_temporal.name) / "horarios.csv"
         with ruta_horarios.open("w", encoding="utf-8", newline="") as archivo:
             escritor = csv.writer(archivo)
             escritor.writerow(["ruta", "estacion", "hora"])
-            escritor.writerow(["A-1", "CALLE 26", "10:00"])
-            escritor.writerow(["A-1", "CALLE 26", "10:20"])
-            escritor.writerow(["A-1", "CALLE 80", "11:00"])
-            escritor.writerow(["A-2", "CALLE 26", "10:10"])
-            escritor.writerow(["B", "CALLE 45", "09:30"])
-            escritor.writerow(["B", "CALLE 80", "10:30"])
+            escritor.writerow(["B74-1", "CALLE 26", "10:00"])
+            escritor.writerow(["B74-1", "CALLE 26", "10:20"])
+            escritor.writerow(["B74-1", "CALLE 80", "11:00"])
+            escritor.writerow(["B74-2", "CALLE 26", "10:10"])
+            escritor.writerow(["D10-1", "CALLE 45", "09:30"])
+            escritor.writerow(["D10-1", "CALLE 80", "10:30"])
         self.red = Red(self.directorio_temporal.name)
 
     def tearDown(self):
@@ -71,27 +71,27 @@ class RedR1R3Tests(unittest.TestCase):
 
     def test_proximo_bus_usa_siguiente_horario(self):
         self.assertEqual(
-            self.red.proximo_bus("CALLE 26", "A", "10:05"),
+            self.red.proximo_bus("CALLE 26", "B74", "10:05"),
             "10:10",
         )
         self.assertEqual(
-            self.red.proximo_bus("CALLE 26", "A-1", "10:05"),
+            self.red.proximo_bus("CALLE 26", "B74-1", "10:05"),
             "10:20",
         )
         self.assertIsNone(
-            self.red.proximo_bus("CALLE 26", "A", "23:00")
+            self.red.proximo_bus("CALLE 26", "B74", "23:00")
         )
 
     def test_viaje_encuentra_directo_y_transbordo(self):
         self.assertEqual(
             self.red.viaje("CALLE 26", "CALLE 80"),
-            [["A", "CALLE 26", "CALLE 80"]],
+            [["B74", "CALLE 26", "CALLE 80"]],
         )
         self.assertEqual(
             self.red.viaje("CALLE 45", "CALLE 26"),
             [
-                ["B", "CALLE 45", "AVENIDA JIMENEZ"],
-                ["A", "AVENIDA JIMENEZ", "CALLE 26"],
+                ["D10", "CALLE 45", "AVENIDA JIMENEZ"],
+                ["B74", "AVENIDA JIMENEZ", "CALLE 26"],
             ],
         )
 

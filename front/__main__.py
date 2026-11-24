@@ -177,7 +177,7 @@ class PlaneadorApp(tk.Tk):
             for segmento in segmentos:
                 texto = (
                     "Tramo " + str(indice)
-                    + ": ruta " + segmento[0]
+                    + ": bus " + segmento[0]
                     + " desde " + segmento[1]
                     + " hasta " + segmento[2]
                 )

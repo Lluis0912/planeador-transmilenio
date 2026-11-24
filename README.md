@@ -78,18 +78,23 @@ o igual a la hora indicada, con formato `"HH:MM"`, o `None`.
 ### R5 — Planear viaje
 
 `Red.viaje(origen, destino)` devuelve una lista de segmentos
-`[ruta, estacion_subida, estacion_bajada]`.
+`[bus, estacion_subida, estacion_bajada]`, por ejemplo `["B74", "AGUAS",
+"CALLE 19"]`.
 
-- `_rutas_info` almacena cada ruta y sus paradas como
-  `[nombre_ruta, [paradas...]]`.
-- Primero busca un recorrido directo. Después busca una ruta de origen y una
-  ruta de destino que compartan una parada abierta.
+- `_rutas_info` almacena cada servicio direccional y sus paradas como
+  `[id_servicio, [paradas...]]`. El motor utiliza ese identificador para
+  encontrar el recorrido, pero devuelve el nombre de bus al pasajero: por
+  ejemplo, convierte `B74-1` y `B74-2` en `B74`.
+- Primero busca un recorrido directo. Después busca un servicio desde el origen
+  y otro hacia el destino que compartan una parada abierta. El resultado muestra
+  el bus que se aborda (por ejemplo, `B74` o `D10`), no el id direccional del CSV
+  (por ejemplo, `B74-1`).
 - Complejidad práctica: **O(R × P × T)** en el peor caso revisado, donde `R`
   es el número de rutas, `P` el recorrido mayor y `T` las coincidencias
   probadas.
 - La alternativa con recorridos desordenados haría búsquedas repetidas por
   posición y sería más costosa. Las rutas se cargan ordenadas una sola vez.
-- La pestaña "Planear viaje" muestra estos segmentos; no calcula rutas ni
+- La pestaña "Planear viaje" muestra el bus de cada segmento; no calcula rutas ni
   transbordos dentro del frontend.
 
 ### R6 — Ranking

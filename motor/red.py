@@ -109,13 +109,16 @@ class Red:
         """
         R5: busca el viaje directo o con un solo transbordo con menos paradas.
 
-        _rutas_info usa una lista por ruta:
-        [nombre_ruta, [estacion_1, estacion_2, ...]]
-        Las rutas estan en el orden real del CSV. La funcion compara recorridos
-        directos y pares de rutas que comparten una estacion.
+        _rutas_info usa una lista por servicio direccional:
+        [id_servicio, [estacion_1, estacion_2, ...]]
+        La funcion compara recorridos directos y pares de servicios que
+        comparten una estacion. El CSV usa id_servicio para separar sentidos;
+        la respuesta convierte ese id en el bus que debe abordar el usuario.
 
         El resultado, preparado para el front, es una lista de segmentos:
-        [ruta, estacion_subida, estacion_bajada].
+        [bus, estacion_subida, estacion_bajada]. Los CSV distinguen variantes
+        direccionales como B74-1 y B74-2; el pasajero toma el bus B74, asi que
+        _nombre_bus elimina el sufijo numerico solo al preparar la respuesta.
         Un viaje directo tiene un segmento y un transbordo tiene dos.
         Si no hay recorrido posible devuelve [].
 
@@ -142,7 +145,7 @@ class Red:
         mejor_paradas = -1
 
         for informacion in self._rutas_info:
-            ruta = informacion[0]
+            servicio = informacion[0]
             paradas = informacion[1]
             indice_origen = self._buscar_en_lista(paradas, origen_normalizado)
             indice_destino = self._buscar_en_lista(paradas, destino_normalizado)
@@ -150,21 +153,27 @@ class Red:
                 cantidad = abs(indice_destino - indice_origen)
                 if mejor_paradas == -1 or cantidad < mejor_paradas:
                     mejor_paradas = cantidad
-                    mejor_segmentos = [[ruta, origen_normalizado, destino_normalizado]]
+                    mejor_segmentos = [
+                        [
+                            self._nombre_bus(servicio),
+                            origen_normalizado,
+                            destino_normalizado,
+                        ]
+                    ]
 
         if mejor_segmentos:
             return mejor_segmentos
 
         indice_ruta_a = 0
         while indice_ruta_a < len(self._rutas_info):
-            ruta_a = self._rutas_info[indice_ruta_a][0]
+            servicio_a = self._rutas_info[indice_ruta_a][0]
             paradas_a = self._rutas_info[indice_ruta_a][1]
             indice_origen = self._buscar_en_lista(paradas_a, origen_normalizado)
             if indice_origen != -1:
                 indice_ruta_b = 0
                 while indice_ruta_b < len(self._rutas_info):
                     if indice_ruta_b != indice_ruta_a:
-                        ruta_b = self._rutas_info[indice_ruta_b][0]
+                        servicio_b = self._rutas_info[indice_ruta_b][0]
                         paradas_b = self._rutas_info[indice_ruta_b][1]
                         indice_destino = self._buscar_en_lista(paradas_b, destino_normalizado)
                         if indice_destino != -1:
@@ -182,14 +191,40 @@ class Red:
                                         if mejor_paradas == -1 or cantidad < mejor_paradas:
                                             mejor_paradas = cantidad
                                             mejor_segmentos = [
-                                                [ruta_a, origen_normalizado, transbordo],
-                                                [ruta_b, transbordo, destino_normalizado],
+                                                [
+                                                    self._nombre_bus(servicio_a),
+                                                    origen_normalizado,
+                                                    transbordo,
+                                                ],
+                                                [
+                                                    self._nombre_bus(servicio_b),
+                                                    transbordo,
+                                                    destino_normalizado,
+                                                ],
                                             ]
                                 indice_parada += 1
                     indice_ruta_b += 1
             indice_ruta_a += 1
 
         return mejor_segmentos
+
+    @staticmethod
+    def _nombre_bus(identificador_servicio):
+        """
+        Convierte un servicio direccional como B74-1 en el bus B74.
+
+        Los sufijos no numéricos, como los de identificadores existentes
+        "1-Jan", se conservan completos. Complejidad O(L), donde L es la
+        longitud del identificador.
+        """
+        separador = identificador_servicio.rfind("-")
+        if separador == -1:
+            return identificador_servicio
+
+        sufijo = identificador_servicio[separador + 1:]
+        if sufijo.isdigit():
+            return identificador_servicio[:separador]
+        return identificador_servicio
 
     def ranking(self, k):
         """
