@@ -57,6 +57,166 @@ class Red:
         self._horarios = self._cargar_horarios(base + "/horarios.csv")
         self._buses = self._obtener_buses()
         self._ranking = self._construir_ranking()
+        self._historial_deshacer = []
+        self._historial_rehacer = []
+
+    def buses_rutas(self):
+        """Devuelve los buses de las rutas ordenadas en O(R)."""
+        buses = []
+        for informacion in self._rutas_info:
+            bus = self._nombre_bus(informacion[0])
+            if len(buses) == 0 or buses[-1] != bus:
+                buses.append(bus)
+        return buses
+
+    def servicios(self, bus):
+        """
+        Devuelve los identificadores direccionales de un bus en O(R).
+
+        El front usa esta lista para que las modificaciones se apliquen a un
+        recorrido concreto; así se pueden mostrar ambos sentidos y editar el
+        servicio elegido sin ambigüedad.
+        """
+        bus_normalizado = self._normalizar(bus)
+        encontrados = []
+        for informacion in self._rutas_info:
+            nombre_bus = self._normalizar(self._nombre_bus(informacion[0]))
+            if nombre_bus == bus_normalizado:
+                encontrados.append(informacion[0])
+        return encontrados
+
+    def estaciones(self):
+        """Devuelve los nombres existentes para los selectores del front: O(n)."""
+        nombres = []
+        for nombre in self._estaciones:
+            nombres.append(nombre)
+        return nombres
+
+    def recorrido(self, ruta, al_reves=False):
+        """
+        R7: obtiene una copia del recorrido en el orden solicitado.
+
+        `ruta` es el identificador direccional, por ejemplo B74-1. El front
+        consulta el mismo servicio con al_reves=False y True para mostrar ambos
+        sentidos. Complejidad O(R + P); la copia evita que el front modifique
+        directamente las estructuras internas.
+        """
+        indice_ruta = self._indice_ruta(ruta)
+        if indice_ruta == -1:
+            return []
+
+        paradas = self._rutas_info[indice_ruta][1]
+        resultado = []
+        if al_reves:
+            posicion = len(paradas) - 1
+            while posicion >= 0:
+                resultado.append(paradas[posicion])
+                posicion -= 1
+        else:
+            for parada in paradas:
+                resultado.append(parada)
+        return resultado
+
+    def agregar_parada(self, ruta, nueva, despues_de):
+        """
+        R7: inserta una estación existente entre dos paradas de un servicio.
+
+        `despues_de` debe tener una parada siguiente para que la inserción quede
+        entre dos paradas que ya estaban en el recorrido. Complejidad O(R + P)
+        por localizar la ruta/paradas y reconstruir la lista tras la inserción.
+        """
+        indice_ruta = self._indice_ruta(ruta)
+        if indice_ruta == -1:
+            raise ValueError("El recorrido seleccionado no existe.")
+
+        nombre_nuevo = self._normalizar(nueva)
+        posicion_estacion = self._posicion_estacion(nombre_nuevo)
+        if posicion_estacion == -1:
+            raise ValueError("Solo se pueden agregar estaciones existentes.")
+
+        paradas = self._rutas_info[indice_ruta][1]
+        posicion_nueva = self._buscar_en_lista(paradas, nombre_nuevo)
+        if posicion_nueva != -1:
+            raise ValueError("La estación ya está en este recorrido.")
+
+        posicion_anterior = self._buscar_en_lista(
+            paradas, self._normalizar(despues_de)
+        )
+        if posicion_anterior == -1 or posicion_anterior >= len(paradas) - 1:
+            raise ValueError("Seleccione una parada con otra parada después.")
+
+        self._guardar_cambio()
+        nuevas_paradas = []
+        posicion = 0
+        while posicion < len(paradas):
+            nuevas_paradas.append(paradas[posicion])
+            if posicion == posicion_anterior:
+                nuevas_paradas.append(nombre_nuevo)
+            posicion += 1
+        self._rutas_info[indice_ruta][1] = nuevas_paradas
+
+    def quitar_parada(self, ruta, estacion):
+        """
+        R7: elimina una estación de un recorrido sin eliminarla de la red.
+
+        Complejidad O(R + P) por localizar el servicio y reconstruir sus
+        paradas. El resto de servicios y la lista maestra de estaciones quedan
+        intactos.
+        """
+        indice_ruta = self._indice_ruta(ruta)
+        if indice_ruta == -1:
+            raise ValueError("El recorrido seleccionado no existe.")
+
+        paradas = self._rutas_info[indice_ruta][1]
+        nombre = self._normalizar(estacion)
+        posicion_eliminar = self._buscar_en_lista(paradas, nombre)
+        if posicion_eliminar == -1:
+            raise ValueError("La estación no pertenece a este recorrido.")
+
+        self._guardar_cambio()
+        nuevas_paradas = []
+        posicion = 0
+        while posicion < len(paradas):
+            if posicion != posicion_eliminar:
+                nuevas_paradas.append(paradas[posicion])
+            posicion += 1
+        self._rutas_info[indice_ruta][1] = nuevas_paradas
+
+    def cerrar(self, nombre):
+        """R8: cierra una estación existente y registra el cambio para R9."""
+        self._cambiar_estado_estacion(nombre, False)
+
+    def reabrir(self, nombre):
+        """R8: reabre una estación existente y registra el cambio para R9."""
+        self._cambiar_estado_estacion(nombre, True)
+
+    def deshacer(self):
+        """
+        R9: restaura el estado anterior del último cambio en O(n + Q).
+
+        Cada entrada conserva snapshots de las listas mutables (estados y
+        recorridos). El historial funciona como pila: LIFO mantiene el orden
+        exacto de cierres, reaperturas y ediciones.
+        """
+        if len(self._historial_deshacer) == 0:
+            return False
+
+        estado_actual = self._copiar_estado_modificable()
+        anterior = self._historial_deshacer.pop()
+        self._historial_rehacer.append(estado_actual)
+        self._restaurar_estado_modificable(anterior)
+        return True
+
+    def rehacer(self):
+        """R9: reaplica el cambio deshecho más reciente; retorna si lo hizo."""
+        if len(self._historial_rehacer) == 0:
+            return False
+
+        estado_actual = self._copiar_estado_modificable()
+        siguiente = self._historial_rehacer.pop()
+        self._historial_deshacer.append(estado_actual)
+        self._restaurar_estado_modificable(siguiente)
+        return True
 
     def proximo_bus(self, estacion, bus, hora):
         """
@@ -416,6 +576,50 @@ class Red:
                 return posicion
             posicion += 1
         return -1
+
+    def _indice_ruta(self, ruta):
+        identificador = str(ruta).strip()
+        posicion = 0
+        while posicion < len(self._rutas_info):
+            if self._rutas_info[posicion][0] == identificador:
+                return posicion
+            posicion += 1
+        return -1
+
+    def _cambiar_estado_estacion(self, nombre, abierta):
+        estacion = self._normalizar(nombre)
+        posicion = self._posicion_estacion(estacion)
+        if posicion == -1:
+            raise ValueError("La estación no existe.")
+        if self._abiertas[posicion] == abierta:
+            return False
+
+        self._guardar_cambio()
+        self._abiertas[posicion] = abierta
+        return True
+
+    def _guardar_cambio(self):
+        """Guarda el snapshot previo y elimina la rama de rehacer (R9)."""
+        self._historial_deshacer.append(self._copiar_estado_modificable())
+        self._historial_rehacer = []
+
+    def _copiar_estado_modificable(self):
+        """Copia listas mutables en O(n + Q), con Q paradas totales."""
+        rutas = []
+        for informacion in self._rutas_info:
+            paradas = []
+            for parada in informacion[1]:
+                paradas.append(parada)
+            rutas.append([informacion[0], paradas])
+
+        estados = []
+        for abierta in self._abiertas:
+            estados.append(abierta)
+        return [rutas, estados]
+
+    def _restaurar_estado_modificable(self, snapshot):
+        self._rutas_info = snapshot[0]
+        self._abiertas = snapshot[1]
 
     def _posicion_estacion(self, estacion):
         inicio = 0

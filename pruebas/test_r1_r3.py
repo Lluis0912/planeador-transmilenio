@@ -34,6 +34,7 @@ class RedR1R3Tests(unittest.TestCase):
             escritor.writerow(["C20-1", 2, "CALLE 80"])
             escritor.writerow(["C20-1", 3, "AVENIDA JIMENEZ"])
             escritor.writerow(["C20-1", 4, "CALLE 26"])
+            escritor.writerow(["1-Jan", 1, "CALLE 26"])
         ruta_horarios = Path(self.directorio_temporal.name) / "horarios.csv"
         with ruta_horarios.open("w", encoding="utf-8", newline="") as archivo:
             escritor = csv.writer(archivo)
@@ -109,6 +110,75 @@ class RedR1R3Tests(unittest.TestCase):
             self.red.ranking(3),
             ["CALLE 26", "CALLE 80", "CALLE 45"],
         )
+
+    def test_r7_muestra_ambos_sentidos_y_agrega_solo_estacion_existente(self):
+        self.assertEqual(self.red.servicios("B74"), ["B74-1", "B74-2"])
+        self.assertEqual(self.red.servicios("1-Jan"), ["1-Jan"])
+        self.assertEqual(
+            self.red.recorrido("B74-1"),
+            ["CALLE 26", "AVENIDA JIMENEZ", "CALLE 80"],
+        )
+        self.assertEqual(
+            self.red.recorrido("B74-1", al_reves=True),
+            ["CALLE 80", "AVENIDA JIMENEZ", "CALLE 26"],
+        )
+
+        self.red.agregar_parada("B74-1", "CALLE 45", "AVENIDA JIMENEZ")
+        self.assertEqual(
+            self.red.recorrido("B74-1"),
+            ["CALLE 26", "AVENIDA JIMENEZ", "CALLE 45", "CALLE 80"],
+        )
+        self.assertEqual(
+            self.red.recorrido("B74-2"),
+            ["CALLE 80", "AVENIDA JIMENEZ", "CALLE 26"],
+        )
+        with self.assertRaises(ValueError):
+            self.red.agregar_parada("B74-1", "ESTACION NUEVA", "CALLE 26")
+
+    def test_r7_quita_parada_sin_borrar_estacion_de_la_red(self):
+        self.red.quitar_parada("B74-1", "AVENIDA JIMENEZ")
+        self.assertEqual(
+            self.red.recorrido("B74-1"),
+            ["CALLE 26", "CALLE 80"],
+        )
+        self.assertEqual(self.red.estado("AVENIDA JIMENEZ"), (True, True))
+
+    def test_r8_y_r9_cierran_reabren_y_rehacen_cambios_en_orden(self):
+        self.red.cerrar("CALLE 26")
+        self.assertEqual(self.red.autocompletar("CALLE 26", 10), [])
+        self.assertNotIn("CALLE 26", self.red.ranking(10))
+        self.red.agregar_parada("B74-1", "CALLE 45", "AVENIDA JIMENEZ")
+        self.assertEqual(self.red.estado("CALLE 26"), (True, False))
+
+        self.assertTrue(self.red.deshacer())
+        self.assertEqual(
+            self.red.recorrido("B74-1"),
+            ["CALLE 26", "AVENIDA JIMENEZ", "CALLE 80"],
+        )
+        self.assertTrue(self.red.deshacer())
+        self.assertEqual(self.red.estado("CALLE 26"), (True, True))
+
+        self.assertTrue(self.red.rehacer())
+        self.assertEqual(self.red.estado("CALLE 26"), (True, False))
+        self.assertTrue(self.red.rehacer())
+        self.assertEqual(
+            self.red.recorrido("B74-1"),
+            ["CALLE 26", "AVENIDA JIMENEZ", "CALLE 45", "CALLE 80"],
+        )
+        self.assertFalse(self.red.rehacer())
+
+        self.red.reabrir("CALLE 26")
+        self.assertEqual(self.red.estado("CALLE 26"), (True, True))
+        self.assertTrue(self.red.deshacer())
+        self.assertEqual(self.red.estado("CALLE 26"), (True, False))
+
+    def test_r9_un_cambio_nuevo_descarta_la_rama_de_rehacer(self):
+        self.red.cerrar("CALLE 26")
+        self.assertTrue(self.red.deshacer())
+        self.red.cerrar("CALLE 80")
+        self.assertFalse(self.red.rehacer())
+        self.assertEqual(self.red.estado("CALLE 26"), (True, True))
+        self.assertEqual(self.red.estado("CALLE 80"), (True, False))
 
 
 if __name__ == "__main__":

@@ -120,6 +120,53 @@ abiertas con más registros de buses al día.
   innecesariamente lento.
 - La pestaña "Ranking" pide solo `k` al motor y presenta los nombres devueltos.
 
+### R7 — Consultar y editar recorridos
+
+El panel "Operar red" permite elegir un bus y luego uno de sus servicios
+direccionales (por ejemplo, `B74-1`). Muestra la secuencia del CSV y la misma
+secuencia al revés. Al editar, se modifica solo el servicio seleccionado:
+
+- `Red.recorrido(ruta, al_reves=False)` devuelve una copia del recorrido.
+  Busca el servicio en una lista y copia sus `P` paradas: **O(R + P)**.
+- `Red.agregar_parada(ruta, nueva, despues_de)` solo acepta estaciones que ya
+  existen en `estaciones.csv`, y exige una parada siguiente para insertar la
+  nueva entre dos paradas existentes. No crea una estación ni cambia otros
+  recorridos.
+- `Red.quitar_parada(ruta, estacion)` quita la parada de ese servicio, pero
+  conserva la estación en la red y en los demás recorridos.
+- Ambas modificaciones cuestan **O(R + P + N + S)** por localizar servicio y
+  estación, reconstruir su lista y guardar el historial. `R` es la cantidad de
+  servicios direccionales, `P` sus paradas máximas, `N` las estaciones y `S`
+  todas las paradas almacenadas en la red.
+- Las listas preservan el orden del servicio y cumplen las restricciones del
+  motor; se usan recorridos lineales porque no se permite un índice `dict`/`set`.
+
+### R8 — Cerrar y reabrir estaciones
+
+`Red.cerrar(nombre)` y `Red.reabrir(nombre)` cambian el booleano asociado a la
+estación en `_abiertas`. La estación sigue existiendo, pero las búsquedas y
+operaciones que requieren una estación abierta respetan su estado.
+
+- Encontrar la estación cuesta **O(log N)** mediante búsqueda binaria.
+- Guardar el snapshot para que R9 pueda revertirlo cuesta **O(N + S)** tiempo y
+  espacio por cambio: una copia de estados y de las listas de recorridos.
+- El panel de operaciones deja disponible solo la acción válida (cerrar o
+  reabrir) según el estado actual.
+
+### R9 — Deshacer y rehacer
+
+`Red.deshacer()` y `Red.rehacer()` usan dos listas como pilas LIFO. Cada cierre,
+reapertura o edición guarda un snapshot de estaciones y recorridos. Deshacer
+restaura el snapshot anterior; rehacer lo vuelve a aplicar. Un cambio nuevo
+después de deshacer borra la pila de rehacer.
+
+- Consultar si hay una acción en la pila y retirarla cuesta **O(1)**.
+- Copiar el estado para undo/redo cuesta **O(N + S)** tiempo y espacio por
+  operación; el historial completo puede ocupar **O(C × (N + S))**, con `C`
+  cambios registrados.
+- Los botones de flecha y Ctrl+Z/Ctrl+Y del panel llaman estos métodos del
+  motor y refrescan los recorridos y el estado de estación mostrados.
+
 ### Operaciones internas importantes
 
 - `Red.__init__`: lee el CSV y usa merge sort propio para ordenar las

@@ -9,19 +9,23 @@ class PlaneadorApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Planeador TransMilenio")
-        self.geometry("560x420")
-        self.minsize(480, 360)
+        self.geometry("900x650")
+        self.minsize(760, 520)
         carpeta_datos = Path(__file__).resolve().parents[1] / "datos"
         self.red = Red(carpeta_datos)
 
-        pestañas = ttk.Notebook(self)
-        pestañas.pack(fill="both", expand=True, padx=12, pady=12)
+        self.pestanas = ttk.Notebook(self)
+        self.pestanas.pack(fill="both", expand=True, padx=12, pady=12)
 
-        self._crear_pestana_busqueda(pestañas)
-        self._crear_pestana_rango(pestañas)
-        self._crear_pestana_proximo(pestañas)
-        self._crear_pestana_viaje(pestañas)
-        self._crear_pestana_ranking(pestañas)
+        self._crear_pestana_busqueda(self.pestanas)
+        self._crear_pestana_rango(self.pestanas)
+        self._crear_pestana_proximo(self.pestanas)
+        self._crear_pestana_viaje(self.pestanas)
+        self._crear_pestana_ranking(self.pestanas)
+        self._crear_pestana_operacion(self.pestanas)
+        self.bind_all("<Control-z>", self._atajo_deshacer)
+        self.bind_all("<Control-y>", self._atajo_rehacer)
+        self.bind_all("<Control-Shift-Z>", self._atajo_rehacer)
 
     def _crear_pestana_busqueda(self, pestañas):
         # R1 y R2 se muestran juntos: Combobox usa Red.autocompletar() mientras
@@ -213,6 +217,270 @@ class PlaneadorApp(tk.Tk):
         for estacion in resultados:
             self.lista_ranking.insert(tk.END, str(posicion) + ". " + estacion)
             posicion += 1
+
+    def _crear_pestana_operacion(self, pestañas):
+        # R7-R9: botones y atajos llaman las funciones del motor. El front
+        # muestra datos y mensajes, pero las validaciones/historial viven en Red.
+        self.pestana_operacion = ttk.Frame(pestañas, padding=10)
+        pestañas.add(self.pestana_operacion, text="Operar red")
+
+        barra_historial = ttk.Frame(self.pestana_operacion)
+        barra_historial.pack(fill="x", pady=(0, 8))
+        ttk.Button(
+            barra_historial, text="↶ Deshacer", command=self._deshacer_cambio
+        ).pack(side="left")
+        ttk.Button(
+            barra_historial, text="↷ Rehacer", command=self._rehacer_cambio
+        ).pack(side="left", padx=(6, 0))
+        ttk.Label(
+            barra_historial, text="Atajos: Ctrl+Z / Ctrl+Y"
+        ).pack(side="left", padx=12)
+        self.mensaje_historial = tk.StringVar(value="")
+        ttk.Label(barra_historial, textvariable=self.mensaje_historial).pack(
+            side="left", padx=8
+        )
+
+        self.pestanas_operacion = ttk.Notebook(self.pestana_operacion)
+        self.pestanas_operacion.pack(fill="both", expand=True)
+        self._crear_panel_rutas(self.pestanas_operacion)
+        self._crear_panel_estaciones(self.pestanas_operacion)
+
+    def _crear_panel_rutas(self, pestañas):
+        panel = ttk.Frame(pestañas, padding=10)
+        pestañas.add(panel, text="Editar recorridos (R7)")
+
+        seleccion = ttk.Frame(panel)
+        seleccion.pack(fill="x")
+        ttk.Label(seleccion, text="Bus").pack(side="left")
+        self.bus_edicion = tk.StringVar()
+        self.selector_bus_edicion = ttk.Combobox(
+            seleccion, textvariable=self.bus_edicion, state="readonly", width=16
+        )
+        self.selector_bus_edicion.pack(side="left", padx=(6, 16))
+        self.selector_bus_edicion.bind(
+            "<<ComboboxSelected>>", self._actualizar_servicios_edicion
+        )
+        ttk.Label(seleccion, text="Recorrido").pack(side="left")
+        self.servicio_edicion = tk.StringVar()
+        self.selector_servicio = ttk.Combobox(
+            seleccion,
+            textvariable=self.servicio_edicion,
+            state="readonly",
+            width=18,
+        )
+        self.selector_servicio.pack(side="left", padx=6)
+        self.selector_servicio.bind(
+            "<<ComboboxSelected>>", lambda evento: self._actualizar_listas_ruta()
+        )
+
+        columnas = ttk.Frame(panel)
+        columnas.pack(fill="both", expand=True, pady=(10, 8))
+        columna_ida = ttk.Frame(columnas)
+        columna_vuelta = ttk.Frame(columnas)
+        columna_ida.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        columna_vuelta.pack(side="left", fill="both", expand=True, padx=(5, 0))
+        ttk.Label(columna_ida, text="Recorrido del servicio").pack(anchor="w")
+        ttk.Label(columna_vuelta, text="Mismo recorrido al revés").pack(anchor="w")
+        self.lista_ida = tk.Listbox(columna_ida, height=9, exportselection=False)
+        self.lista_vuelta = tk.Listbox(columna_vuelta, height=9, exportselection=False)
+        self.lista_ida.pack(fill="both", expand=True)
+        self.lista_vuelta.pack(fill="both", expand=True)
+
+        controles = ttk.LabelFrame(panel, text="Modificar paradas existentes", padding=8)
+        controles.pack(fill="x")
+        ttk.Label(controles, text="Agregar estación").grid(row=0, column=0, sticky="w")
+        ttk.Label(controles, text="Insertar después de").grid(row=0, column=1, sticky="w", padx=(8, 0))
+        self.estacion_nueva = tk.StringVar()
+        self.parada_previa = tk.StringVar()
+        self.selector_estacion_nueva = ttk.Combobox(
+            controles,
+            textvariable=self.estacion_nueva,
+            values=self.red.estaciones(),
+            state="readonly",
+        )
+        self.selector_estacion_nueva.grid(row=1, column=0, sticky="ew")
+        self.selector_parada_previa = ttk.Combobox(
+            controles, textvariable=self.parada_previa, state="readonly"
+        )
+        self.selector_parada_previa.grid(row=1, column=1, sticky="ew", padx=(8, 0))
+        ttk.Button(
+            controles, text="Agregar parada", command=self._agregar_parada_ui
+        ).grid(row=1, column=2, padx=(8, 0))
+        ttk.Button(
+            controles,
+            text="Quitar seleccionada",
+            command=self._quitar_parada_ui,
+        ).grid(row=1, column=3, padx=(6, 0))
+        controles.columnconfigure(0, weight=1)
+        controles.columnconfigure(1, weight=1)
+
+        self.mensaje_rutas = ttk.Label(panel, text="")
+        self.mensaje_rutas.pack(anchor="w", pady=(6, 0))
+        buses = self.red.buses_rutas()
+        self.selector_bus_edicion.configure(values=buses)
+        if buses:
+            self.bus_edicion.set(buses[0])
+            self._actualizar_servicios_edicion()
+
+    def _actualizar_servicios_edicion(self, evento=None):
+        servicios = self.red.servicios(self.bus_edicion.get())
+        self.selector_servicio.configure(values=servicios)
+        if servicios:
+            self.servicio_edicion.set(servicios[0])
+        else:
+            self.servicio_edicion.set("")
+        self._actualizar_listas_ruta()
+
+    def _actualizar_listas_ruta(self):
+        servicio = self.servicio_edicion.get()
+        ida = self.red.recorrido(servicio)
+        vuelta = self.red.recorrido(servicio, al_reves=True)
+        self.lista_ida.delete(0, tk.END)
+        self.lista_vuelta.delete(0, tk.END)
+        for estacion in ida:
+            self.lista_ida.insert(tk.END, estacion)
+        for estacion in vuelta:
+            self.lista_vuelta.insert(tk.END, estacion)
+
+        opciones_insercion = ida[:-1] if len(ida) > 0 else []
+        self.selector_parada_previa.configure(values=opciones_insercion)
+        if opciones_insercion:
+            self.parada_previa.set(opciones_insercion[0])
+        else:
+            self.parada_previa.set("")
+
+    def _agregar_parada_ui(self):
+        try:
+            self.red.agregar_parada(
+                self.servicio_edicion.get(),
+                self.estacion_nueva.get(),
+                self.parada_previa.get(),
+            )
+        except ValueError as error:
+            self.mensaje_rutas.configure(text=str(error))
+            return
+
+        self.mensaje_rutas.configure(text="Parada agregada al recorrido.")
+        self._actualizar_listas_ruta()
+
+    def _quitar_parada_ui(self):
+        seleccion = self.lista_ida.curselection()
+        if seleccion:
+            estacion = self.lista_ida.get(seleccion[0])
+        else:
+            seleccion = self.lista_vuelta.curselection()
+            if not seleccion:
+                self.mensaje_rutas.configure(
+                    text="Selecciona una parada en cualquiera de los recorridos."
+                )
+                return
+            estacion = self.lista_vuelta.get(seleccion[0])
+
+        try:
+            self.red.quitar_parada(self.servicio_edicion.get(), estacion)
+        except ValueError as error:
+            self.mensaje_rutas.configure(text=str(error))
+            return
+
+        self.mensaje_rutas.configure(text="Parada quitada del recorrido.")
+        self._actualizar_listas_ruta()
+
+    def _crear_panel_estaciones(self, pestañas):
+        panel = ttk.Frame(pestañas, padding=12)
+        pestañas.add(panel, text="Estaciones (R8)")
+        ttk.Label(panel, text="Selecciona una estación existente").pack(anchor="w")
+        self.estacion_operacion = tk.StringVar()
+        self.selector_estacion_operacion = ttk.Combobox(
+            panel,
+            textvariable=self.estacion_operacion,
+            values=self.red.estaciones(),
+            state="readonly",
+        )
+        self.selector_estacion_operacion.pack(fill="x", pady=(6, 10))
+        self.selector_estacion_operacion.bind(
+            "<<ComboboxSelected>>", lambda evento: self._actualizar_estado_operacion()
+        )
+
+        botones = ttk.Frame(panel)
+        botones.pack(anchor="w")
+        self.boton_cerrar = ttk.Button(
+            botones, text="Cerrar estación", command=self._cerrar_estacion_ui
+        )
+        self.boton_cerrar.pack(side="left")
+        self.boton_reabrir = ttk.Button(
+            botones, text="Reabrir estación", command=self._reabrir_estacion_ui
+        )
+        self.boton_reabrir.pack(side="left", padx=(8, 0))
+        self.estado_operacion = ttk.Label(panel, text="")
+        self.estado_operacion.pack(anchor="w", pady=(12, 0))
+        estaciones = self.red.estaciones()
+        if estaciones:
+            self.selector_estacion_operacion.set(estaciones[0])
+        self._actualizar_estado_operacion()
+
+    def _actualizar_estado_operacion(self):
+        nombre = self.estacion_operacion.get()
+        existe, abierta = self.red.estado(nombre)
+        if not existe:
+            self.estado_operacion.configure(text="Selecciona una estación.")
+            self.boton_cerrar.configure(state="disabled")
+            self.boton_reabrir.configure(state="disabled")
+        elif abierta:
+            self.estado_operacion.configure(text="La estación está abierta.")
+            self.boton_cerrar.configure(state="normal")
+            self.boton_reabrir.configure(state="disabled")
+        else:
+            self.estado_operacion.configure(text="La estación está cerrada.")
+            self.boton_cerrar.configure(state="disabled")
+            self.boton_reabrir.configure(state="normal")
+
+    def _cerrar_estacion_ui(self):
+        try:
+            self.red.cerrar(self.estacion_operacion.get())
+        except ValueError as error:
+            self.estado_operacion.configure(text=str(error))
+            return
+        self._actualizar_estado_operacion()
+
+    def _reabrir_estacion_ui(self):
+        try:
+            self.red.reabrir(self.estacion_operacion.get())
+        except ValueError as error:
+            self.estado_operacion.configure(text=str(error))
+            return
+        self._actualizar_estado_operacion()
+
+    def _deshacer_cambio(self, evento=None):
+        if self.red.deshacer():
+            mensaje = "Último cambio deshecho."
+        else:
+            mensaje = "No hay cambios para deshacer."
+        self.mensaje_historial.set(mensaje)
+        self.mensaje_rutas.configure(text=mensaje)
+        self._actualizar_listas_ruta()
+        self._actualizar_estado_operacion()
+        return "break"
+
+    def _rehacer_cambio(self, evento=None):
+        if self.red.rehacer():
+            mensaje = "Cambio rehecho."
+        else:
+            mensaje = "No hay cambios para rehacer."
+        self.mensaje_historial.set(mensaje)
+        self.mensaje_rutas.configure(text=mensaje)
+        self._actualizar_listas_ruta()
+        self._actualizar_estado_operacion()
+        return "break"
+
+    def _atajo_deshacer(self, evento):
+        if self.pestanas.select() == str(self.pestana_operacion):
+            return self._deshacer_cambio(evento)
+        return None
+
+    def _atajo_rehacer(self, evento):
+        if self.pestanas.select() == str(self.pestana_operacion):
+            return self._rehacer_cambio(evento)
+        return None
 
 
 def main():
