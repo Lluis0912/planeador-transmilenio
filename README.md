@@ -85,15 +85,24 @@ o igual a la hora indicada, con formato `"HH:MM"`, o `None`.
   `[id_servicio, [paradas...]]`. El motor utiliza ese identificador para
   encontrar el recorrido, pero devuelve el nombre de bus al pasajero: por
   ejemplo, convierte `B74-1` y `B74-2` en `B74`.
-- Primero busca un recorrido directo. Después busca un servicio desde el origen
-  y otro hacia el destino que compartan una parada abierta. El resultado muestra
-  el bus que se aborda (por ejemplo, `B74` o `D10`), no el id direccional del CSV
-  (por ejemplo, `B74-1`).
-- Complejidad práctica: **O(R × P × T)** en el peor caso revisado, donde `R`
-  es el número de rutas, `P` el recorrido mayor y `T` las coincidencias
-  probadas.
-- La alternativa con recorridos desordenados haría búsquedas repetidas por
-  posición y sería más costosa. Las rutas se cargan ordenadas una sola vez.
+- El motor evalúa los viajes directos y los de un transbordo, y devuelve el que
+  recorre menos paradas. Solo cuenta trayectos que avanzan en el orden del
+  servicio direccional, y el transbordo debe ser una estación abierta.
+- Las paradas se guardan en listas en el orden del CSV. La búsqueda de una
+  estación dentro de una lista es lineal, **O(P)**; se eligió porque las listas
+  son la estructura permitida por las reglas del motor y conservan directamente
+  el orden de recorrido. No se usan diccionarios, conjuntos ni índices externos.
+- **Complejidad temporal de consulta: O(log n + R² × P² + R² × P × log n)**:
+  se prueban pares de servicios y posibles transbordos con búsquedas lineales
+  en sus listas, y se verifica si los transbordos están abiertos mediante
+  búsqueda binaria. `n` es el número de estaciones, `R` el número de servicios
+  direccionales y `P` la cantidad máxima de paradas por servicio. El caso
+  directo cuesta O(R × P), dominado por las comparaciones de transbordos.
+- **Espacio de la respuesta: O(1)**, pues se conserva únicamente el mejor plan,
+  que contiene como máximo dos segmentos. El almacenamiento de rutas ya
+  cargadas es **O(R × P)**.
+- Revisar todos los candidatos y comparar su cantidad de paradas es necesario
+  para asegurar que un transbordo no gane a un viaje directo más corto.
 - La pestaña "Planear viaje" muestra el bus de cada segmento; no calcula rutas ni
   transbordos dentro del frontend.
 

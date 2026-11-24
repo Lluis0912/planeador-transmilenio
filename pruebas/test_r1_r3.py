@@ -27,6 +27,13 @@ class RedR1R3Tests(unittest.TestCase):
             escritor.writerow(["D10-1", 1, "CALLE 45"])
             escritor.writerow(["D10-1", 2, "AVENIDA JIMENEZ"])
             escritor.writerow(["D10-1", 3, "CALLE 80"])
+            escritor.writerow(["B74-2", 1, "CALLE 80"])
+            escritor.writerow(["B74-2", 2, "AVENIDA JIMENEZ"])
+            escritor.writerow(["B74-2", 3, "CALLE 26"])
+            escritor.writerow(["C20-1", 1, "CALLE 45"])
+            escritor.writerow(["C20-1", 2, "CALLE 80"])
+            escritor.writerow(["C20-1", 3, "AVENIDA JIMENEZ"])
+            escritor.writerow(["C20-1", 4, "CALLE 26"])
         ruta_horarios = Path(self.directorio_temporal.name) / "horarios.csv"
         with ruta_horarios.open("w", encoding="utf-8", newline="") as archivo:
             escritor = csv.writer(archivo)
@@ -87,6 +94,8 @@ class RedR1R3Tests(unittest.TestCase):
             self.red.viaje("CALLE 26", "CALLE 80"),
             [["B74", "CALLE 26", "CALLE 80"]],
         )
+
+    def test_viaje_elige_transbordo_con_menos_paradas_que_directo(self):
         self.assertEqual(
             self.red.viaje("CALLE 45", "CALLE 26"),
             [

@@ -122,12 +122,16 @@ class Red:
         Un viaje directo tiene un segmento y un transbordo tiene dos.
         Si no hay recorrido posible devuelve [].
 
-        Complejidad: O(q + R*P + R^2*T), donde R es la cantidad de rutas,
-        P su mayor recorrido y T la cantidad de estaciones compartidas probadas.
-        En datos reales esta simplificacion tambien evita estructuras hash
-        prohibidas y es simple de explicar.
-        Es mas eficiente que probar todas las rutas con recorridos desordenados:
-        las estaciones se buscan por posicion dentro de cada lista.
+        Se comparan todas las opciones directas y con un transbordo, guardando
+        la de menor cantidad total de paradas recorridas. Solo se permite
+        avanzar en el orden de cada servicio direccional.
+
+        Complejidad: O(log n + R^2*P^2 + R^2*P*log n), donde n es el numero
+        de estaciones, R los servicios direccionales y P las paradas maximas
+        por servicio. El ultimo termino corresponde a verificar estaciones de
+        transbordo con estado(), que usa busqueda binaria. Se usan listas
+        simples porque dict/set estan prohibidos; estas conservan el orden del
+        recorrido sin indices auxiliares.
         """
         origen_normalizado = self._normalizar(origen)
         destino_normalizado = self._normalizar(destino)
@@ -144,13 +148,15 @@ class Red:
         mejor_segmentos = []
         mejor_paradas = -1
 
+        # Considera cada servicio directo; la diferencia de indices cuenta
+        # cuantas paradas se recorren desde el origen hasta el destino.
         for informacion in self._rutas_info:
             servicio = informacion[0]
             paradas = informacion[1]
             indice_origen = self._buscar_en_lista(paradas, origen_normalizado)
             indice_destino = self._buscar_en_lista(paradas, destino_normalizado)
-            if indice_origen != -1 and indice_destino != -1:
-                cantidad = abs(indice_destino - indice_origen)
+            if indice_origen != -1 and indice_destino > indice_origen:
+                cantidad = indice_destino - indice_origen
                 if mejor_paradas == -1 or cantidad < mejor_paradas:
                     mejor_paradas = cantidad
                     mejor_segmentos = [
@@ -160,9 +166,6 @@ class Red:
                             destino_normalizado,
                         ]
                     ]
-
-        if mejor_segmentos:
-            return mejor_segmentos
 
         indice_ruta_a = 0
         while indice_ruta_a < len(self._rutas_info):
@@ -181,12 +184,18 @@ class Red:
                             while indice_parada < len(paradas_a):
                                 transbordo = paradas_a[indice_parada]
                                 indice_b = self._buscar_en_lista(paradas_b, transbordo)
-                                if transbordo != origen_normalizado and transbordo != destino_normalizado and indice_b != -1:
+                                if (
+                                    transbordo != origen_normalizado
+                                    and transbordo != destino_normalizado
+                                    and indice_parada > indice_origen
+                                    and indice_b != -1
+                                    and indice_destino > indice_b
+                                ):
                                     existe_transbordo, abierta_transbordo = self.estado(transbordo)
                                     if existe_transbordo and abierta_transbordo:
                                         cantidad = (
-                                            abs(indice_parada - indice_origen)
-                                            + abs(indice_destino - indice_b)
+                                            indice_parada - indice_origen
+                                            + indice_destino - indice_b
                                         )
                                         if mejor_paradas == -1 or cantidad < mejor_paradas:
                                             mejor_paradas = cantidad
