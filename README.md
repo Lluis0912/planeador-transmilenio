@@ -58,6 +58,54 @@ inclusive.
 - Crear la respuesta requiere recorrer las `r` estaciones; la alternativa de
   barrer toda la red desde la primera estación sería **O(n)**.
 
+### R4 — Próximo bus
+
+`Red.proximo_bus(estacion, bus, hora)` devuelve el primer horario posterior
+o igual a la hora indicada, con formato `"HH:MM"`, o `None`.
+
+- Los horarios se cargan en `_horarios` como
+  `[ruta, estacion, minuto, texto]`.
+- El usuario puede indicar el bus base, por ejemplo `B74`; el motor considera
+  sus servicios identificados en el CSV como `B74-1`, `B74-2` y `B74-3`.
+- La lista se ordena por ruta, estación y minuto con merge sort.
+- Complejidad: **O(log b + v log h)**, donde `b` es la cantidad de buses
+  únicos, `v` la cantidad de variantes del bus y `h` las filas de horarios.
+- Es más eficiente que recorrer todos los horarios desde el inicio. Si se
+  recorrieran secuencialmente, la consulta costaría **O(h)**.
+- La pestaña "Próximo bus" recoge estación, bus y hora actual y usa esta
+  función; solamente presenta el horario devuelto o un mensaje si no hay bus.
+
+### R5 — Planear viaje
+
+`Red.viaje(origen, destino)` devuelve una lista de segmentos
+`[ruta, estacion_subida, estacion_bajada]`.
+
+- `_rutas_info` almacena cada ruta y sus paradas como
+  `[nombre_ruta, [paradas...]]`.
+- Primero busca un recorrido directo. Después busca una ruta de origen y una
+  ruta de destino que compartan una parada abierta.
+- Complejidad práctica: **O(R × P × T)** en el peor caso revisado, donde `R`
+  es el número de rutas, `P` el recorrido mayor y `T` las coincidencias
+  probadas.
+- La alternativa con recorridos desordenados haría búsquedas repetidas por
+  posición y sería más costosa. Las rutas se cargan ordenadas una sola vez.
+- La pestaña "Planear viaje" muestra estos segmentos; no calcula rutas ni
+  transbordos dentro del frontend.
+
+### R6 — Ranking
+
+`Red.ranking(k)` devuelve una lista con los nombres de las `k` estaciones
+abiertas con más registros de buses al día.
+
+- `_ranking` es una lista cacheada `[estacion, conteo]`, ordenada por conteo
+  descendente y nombre ascendente.
+- Construcción: **O(h × u + u log u)** y consulta: **O(k)**, donde `h` cuenta
+  filas de horarios y `u` estaciones únicas.
+- El cache evita contar nuevamente los cientos de miles de horarios en cada
+  consulta frecuente. Un conteo desde `horarios.csv` para cada solicitud sería
+  innecesariamente lento.
+- La pestaña "Ranking" pide solo `k` al motor y presenta los nombres devueltos.
+
 ### Operaciones internas importantes
 
 - `Red.__init__`: lee el CSV y usa merge sort propio para ordenar las

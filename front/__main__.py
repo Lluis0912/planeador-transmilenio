@@ -19,6 +19,9 @@ class PlaneadorApp(tk.Tk):
 
         self._crear_pestana_busqueda(pestañas)
         self._crear_pestana_rango(pestañas)
+        self._crear_pestana_proximo(pestañas)
+        self._crear_pestana_viaje(pestañas)
+        self._crear_pestana_ranking(pestañas)
 
     def _crear_pestana_busqueda(self, pestañas):
         # R1 y R2 se muestran juntos: Combobox usa Red.autocompletar() mientras
@@ -100,6 +103,116 @@ class PlaneadorApp(tk.Tk):
         self.lista_rango.delete(0, tk.END)
         for estacion in resultados:
             self.lista_rango.insert(tk.END, estacion)
+
+    def _crear_pestana_proximo(self, pestañas):
+        # R4: el front recoge estacion, bus y hora actual; Red.proximo_bus() hace
+        # toda la conversion y busqueda sobre los horarios.
+        pestaña = ttk.Frame(pestañas, padding=16)
+        pestañas.add(pestaña, text="Próximo bus")
+
+        ttk.Label(pestaña, text="Estación").grid(row=0, column=0, sticky="w")
+        ttk.Label(pestaña, text="Bus (ej. B74)").grid(row=0, column=1, sticky="w", padx=(12, 0))
+        ttk.Label(pestaña, text="Hora (HH:MM)").grid(row=0, column=2, sticky="w", padx=(12, 0))
+
+        self.bus_estacion = tk.StringVar()
+        self.bus_codigo = tk.StringVar()
+        self.bus_hora = tk.StringVar()
+        ttk.Entry(pestaña, textvariable=self.bus_estacion).grid(row=1, column=0, sticky="ew")
+        ttk.Entry(pestaña, textvariable=self.bus_codigo).grid(row=1, column=1, sticky="ew", padx=(12, 0))
+        ttk.Entry(pestaña, textvariable=self.bus_hora).grid(row=1, column=2, sticky="ew", padx=(12, 0))
+        pestaña.columnconfigure(0, weight=1)
+        pestaña.columnconfigure(1, weight=1)
+        pestaña.columnconfigure(2, weight=1)
+
+        ttk.Button(pestaña, text="Consultar", command=self._consultar_proximo).grid(
+            row=2, column=0, sticky="w", pady=12
+        )
+        self.resultado_proximo = ttk.Label(pestaña, text="")
+        self.resultado_proximo.grid(row=3, column=0, columnspan=3, sticky="w")
+
+    def _consultar_proximo(self):
+        hora = self.red.proximo_bus(
+            self.bus_estacion.get(),
+            self.bus_codigo.get(),
+            self.bus_hora.get(),
+        )
+        if hora is None:
+            mensaje = "No hay un bus posterior con esos datos."
+        else:
+            mensaje = "Próximo bus: " + hora
+        self.resultado_proximo.configure(text=mensaje)
+
+    def _crear_pestana_viaje(self, pestañas):
+        # R5: cada segmento recibido tiene [ruta, subida, bajada].
+        # El front solo presenta el plan calculado por Red.viaje().
+        pestaña = ttk.Frame(pestañas, padding=16)
+        pestañas.add(pestaña, text="Planear viaje")
+
+        ttk.Label(pestaña, text="Origen").grid(row=0, column=0, sticky="w")
+        ttk.Label(pestaña, text="Destino").grid(row=0, column=1, sticky="w", padx=(12, 0))
+        self.viaje_origen = tk.StringVar()
+        self.viaje_destino = tk.StringVar()
+        ttk.Entry(pestaña, textvariable=self.viaje_origen).grid(row=1, column=0, sticky="ew")
+        ttk.Entry(pestaña, textvariable=self.viaje_destino).grid(row=1, column=1, sticky="ew", padx=(12, 0))
+        pestaña.columnconfigure(0, weight=1)
+        pestaña.columnconfigure(1, weight=1)
+
+        ttk.Button(pestaña, text="Planear", command=self._consultar_viaje).grid(
+            row=2, column=0, sticky="w", pady=12
+        )
+        self.lista_viaje = tk.Listbox(pestaña, height=10)
+        self.lista_viaje.grid(row=3, column=0, columnspan=2, sticky="nsew")
+        pestaña.rowconfigure(3, weight=1)
+
+    def _consultar_viaje(self):
+        segmentos = self.red.viaje(
+            self.viaje_origen.get(),
+            self.viaje_destino.get(),
+        )
+        self.lista_viaje.delete(0, tk.END)
+        if len(segmentos) == 0:
+            self.lista_viaje.insert(tk.END, "No existe un viaje directo o con un transbordo.")
+        else:
+            indice = 1
+            for segmento in segmentos:
+                texto = (
+                    "Tramo " + str(indice)
+                    + ": ruta " + segmento[0]
+                    + " desde " + segmento[1]
+                    + " hasta " + segmento[2]
+                )
+                self.lista_viaje.insert(tk.END, texto)
+                indice += 1
+
+    def _crear_pestana_ranking(self, pestañas):
+        # R6: el front solicita k nombres al motor; el motor usa el cache
+        # ordenado sin volver a contar todos los horarios.
+        pestaña = ttk.Frame(pestañas, padding=16)
+        pestañas.add(pestaña, text="Ranking")
+
+        fila = ttk.Frame(pestaña)
+        fila.pack(fill="x")
+        ttk.Label(fila, text="Cantidad").pack(side="left")
+        self.ranking_k = tk.StringVar(value="10")
+        ttk.Spinbox(fila, from_=1, to=147, width=5, textvariable=self.ranking_k).pack(
+            side="left", padx=(8, 12)
+        )
+        ttk.Button(fila, text="Mostrar", command=self._consultar_ranking).pack(side="left")
+
+        self.lista_ranking = tk.Listbox(pestaña, height=14)
+        self.lista_ranking.pack(fill="both", expand=True, pady=(12, 0))
+
+    def _consultar_ranking(self):
+        try:
+            cantidad = int(self.ranking_k.get())
+        except ValueError:
+            cantidad = 0
+        resultados = self.red.ranking(cantidad)
+        self.lista_ranking.delete(0, tk.END)
+        posicion = 1
+        for estacion in resultados:
+            self.lista_ranking.insert(tk.END, str(posicion) + ". " + estacion)
+            posicion += 1
 
 
 def main():
