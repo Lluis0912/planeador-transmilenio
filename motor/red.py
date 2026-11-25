@@ -4,7 +4,7 @@ import random
 
 def simular_fila(llegadas, frecuencia, capacidad):
     """
-    Simula una fila FIFO durante el periodo indicado por `llegadas`.
+    R10: simula una fila FIFO durante el periodo indicado por `llegadas`.
 
     Cada posicion de llegadas representa pasajeros que llegan en ese minuto.
     Un bus aparece en el minuto 0 y luego cada `frecuencia` minutos; lleva
@@ -140,6 +140,7 @@ class Red:
         self._horarios = self._cargar_horarios(base + "/horarios.csv")
         self._buses = self._obtener_buses()
         self._ranking = self._construir_ranking()
+        self._ranking_desactualizado = False
         self._historial_deshacer = []
         self._historial_rehacer = []
         self._flujo_global = 0
@@ -150,6 +151,7 @@ class Red:
         self._eventos_horario, self._viajes_horario = (
             self._construir_eventos_horario()
         )
+        self._eventos_horario_desactualizados = False
 
     def configurar_demanda_global(self, pasajeros_por_minuto):
         """Configura la tasa base que genera demanda en todas las estaciones."""
@@ -239,6 +241,10 @@ class Red:
         Los CSV no tienen identificador de vehículo; por ello, el evento numero
         i de cada parada de un servicio se asocia al viaje i. Es una
         aproximación de los datos disponibles, y se documenta en README.
+
+        Si H son las filas de horario y P el máximo de paradas de un servicio,
+        ubicar estaciones cuesta O(H*P) y ordenar los eventos O(H log H).
+        Las listas agrupadas requieren O(H) espacio.
         """
         eventos = []
         viajes = []
@@ -302,6 +308,18 @@ class Red:
 
         return self._ordenar_eventos_horario(eventos), viajes
 
+    def _invalidar_eventos_horario(self):
+        """Marca el índice R10 para reconstruirlo tras cambios R7."""
+        self._eventos_horario_desactualizados = True
+
+    def _asegurar_eventos_horario_actualizados(self):
+        """Reconstruye una sola vez el índice R10 cuando cambian recorridos."""
+        if self._eventos_horario_desactualizados:
+            self._eventos_horario, self._viajes_horario = (
+                self._construir_eventos_horario()
+            )
+            self._eventos_horario_desactualizados = False
+
     @classmethod
     def _ordenar_eventos_horario(cls, eventos):
         """Ordena llegadas por minuto con merge sort: O(H log H), espacio O(H)."""
@@ -341,7 +359,11 @@ class Red:
 
     def _simular_dia_por_frecuencia(self, frecuencia):
         """
-        Simula un día de 1440 minutos en toda la red.
+        Prototipo privado anterior de R10; no lo usa el frontend.
+
+        La simulación activa con destinos aleatorios y horarios reales es
+        `simular_dia()`, más abajo. No es parte del contrato de la interfaz;
+        solo documenta el modelo inicial basado en frecuencia.
 
         Demanda: una tasa global y un destino, con excepciones por estación;
         los incrementos horarios se suman a la tasa aplicable. Servicio:
@@ -817,7 +839,8 @@ class Red:
 
         Cada viaje se crea a partir de las secuencias de horarios por parada.
         Las colas se guardan como matriz estación x servicio; cada celda es una
-        lista FIFO de lotes y un índice de cabeza evita retirar por índice 0.
+        lista FIFO de lotes. En cada llegada se recorre y reconstruye esa cola
+        conservando, en orden, los grupos que no puede abordar ese bus.
         El evento de horario identifica minuto, viaje, estación y orden de parada.
 
         Cada lote elige uniformemente un destino distinto del origen entre los
@@ -838,10 +861,10 @@ class Red:
         los grupos de pasajeros procesados. Espacio O(H + V*N + N*R +
         1440*S + D + G), con V viajes, D opciones de destino y G grupos.
         """
+        self._asegurar_eventos_horario_actualizados()
         numero_estaciones = len(self._estaciones)
         numero_servicios = len(self._rutas_info)
         colas = []
-        indices_cola = []
         metricas = []
         esperando_estacion = []
         cola_sin_ruta = []
@@ -850,14 +873,11 @@ class Red:
         indice_estacion = 0
         while indice_estacion < numero_estaciones:
             colas_estacion = []
-            indices_estacion = []
             indice_servicio = 0
             while indice_servicio < numero_servicios:
                 colas_estacion.append([])
-                indices_estacion.append(0)
                 indice_servicio += 1
             colas.append(colas_estacion)
-            indices_cola.append(indices_estacion)
             metricas.append([0, 0, 0, 0, 0, 0, 0])
             esperando_estacion.append(0)
             cola_sin_ruta.append([])
@@ -1126,7 +1146,7 @@ class Red:
                     viaje[2] = restantes
 
                     cola = colas[indice_estacion][indice_servicio]
-                    cabeza = indices_cola[indice_estacion][indice_servicio]
+                    cabeza = 0
                     grupos_restantes = []
                     while cabeza < len(cola):
                         grupo = cola[cabeza]
@@ -1235,7 +1255,6 @@ class Red:
                     colas[indice_estacion][indice_servicio] = (
                         grupos_restantes
                     )
-                    indices_cola[indice_estacion][indice_servicio] = 0
                 indice_evento += 1
             minuto += 1
 
@@ -1252,7 +1271,7 @@ class Red:
             indice_servicio = 0
             while indice_servicio < numero_servicios:
                 cola = colas[indice_estacion][indice_servicio]
-                cabeza = indices_cola[indice_estacion][indice_servicio]
+                cabeza = 0
                 while cabeza < len(cola):
                     grupo = cola[cabeza]
                     cantidad = grupo[4]
@@ -1343,7 +1362,7 @@ class Red:
         return resultado
 
     def _plan_servicios(self, origen, destino):
-        """Calcula el primer itinerario mínimo en servicios direccionales."""
+        """Helper del prototipo R10 por frecuencia; R5 usa `viaje()`."""
         if origen == destino:
             return []
         posicion_origen = self._posicion_estacion(origen)
@@ -1409,6 +1428,7 @@ class Red:
         return mejor
 
     def _buscar_flujo_estacion(self, estacion):
+        """Búsqueda lineal del prototipo R10 antiguo; no la usa la app."""
         posicion = 0
         while posicion < len(self._flujos_estaciones):
             if self._flujos_estaciones[posicion][0] == estacion:
@@ -1418,6 +1438,7 @@ class Red:
 
     @staticmethod
     def _contar_cola(cola):
+        """Conteo auxiliar del prototipo R10 antiguo, no del simulador activo."""
         cantidad = 0
         for pasajero in cola:
             cantidad += pasajero[5]
@@ -1508,8 +1529,10 @@ class Red:
         R7: inserta una estación existente entre dos paradas de un servicio.
 
         `despues_de` debe tener una parada siguiente para que la inserción quede
-        entre dos paradas que ya estaban en el recorrido. Complejidad O(R + P)
-        por localizar la ruta/paradas y reconstruir la lista tras la inserción.
+        entre dos paradas que ya estaban en el recorrido. Buscar servicio,
+        validar estación y reconstruir la lista cuesta O(R + P + log N).
+        El historial guarda referencias a las listas anterior y nueva, sin
+        copiar toda la red (R9). La edición invalida las cachés R6 y R10.
         """
         indice_ruta = self._indice_ruta(ruta)
         if indice_ruta == -1:
@@ -1531,7 +1554,6 @@ class Red:
         if posicion_anterior == -1 or posicion_anterior >= len(paradas) - 1:
             raise ValueError("Seleccione una parada con otra parada después.")
 
-        self._guardar_cambio()
         nuevas_paradas = []
         posicion = 0
         while posicion < len(paradas):
@@ -1539,15 +1561,22 @@ class Red:
             if posicion == posicion_anterior:
                 nuevas_paradas.append(nombre_nuevo)
             posicion += 1
+        self._guardar_cambio(
+            ["ruta", indice_ruta, paradas, nuevas_paradas]
+        )
         self._rutas_info[indice_ruta][1] = nuevas_paradas
+        self._invalidar_ranking()
+        self._invalidar_eventos_horario()
+        self._resultado_r10 = []
 
     def quitar_parada(self, ruta, estacion):
         """
         R7: elimina una estación de un recorrido sin eliminarla de la red.
 
-        Complejidad O(R + P) por localizar el servicio y reconstruir sus
-        paradas. El resto de servicios y la lista maestra de estaciones quedan
-        intactos.
+        Complejidad O(R + P): se localiza el servicio y la parada y se reconstruye
+        la lista. R9 conserva referencias a la lista antes y después del cambio.
+        El resto de servicios y la lista maestra de estaciones quedan intactos.
+        La edición invalida las cachés R6 y R10.
         """
         indice_ruta = self._indice_ruta(ruta)
         if indice_ruta == -1:
@@ -1559,14 +1588,19 @@ class Red:
         if posicion_eliminar == -1:
             raise ValueError("La estación no pertenece a este recorrido.")
 
-        self._guardar_cambio()
         nuevas_paradas = []
         posicion = 0
         while posicion < len(paradas):
             if posicion != posicion_eliminar:
                 nuevas_paradas.append(paradas[posicion])
             posicion += 1
+        self._guardar_cambio(
+            ["ruta", indice_ruta, paradas, nuevas_paradas]
+        )
         self._rutas_info[indice_ruta][1] = nuevas_paradas
+        self._invalidar_ranking()
+        self._invalidar_eventos_horario()
+        self._resultado_r10 = []
 
     def cerrar(self, nombre):
         """R8: cierra una estación existente y registra el cambio para R9."""
@@ -1578,30 +1612,28 @@ class Red:
 
     def deshacer(self):
         """
-        R9: restaura el estado anterior del último cambio en O(n + Q).
+        R9: aplica la acción inversa más reciente usando una pila LIFO.
 
-        Cada entrada conserva snapshots de las listas mutables (estados y
-        recorridos). El historial funciona como pila: LIFO mantiene el orden
-        exacto de cierres, reaperturas y ediciones.
+        Sacar y mover la acción cuesta O(1) amortizado. Reemplazar un booleano
+        o una referencia a lista también cuesta O(1); R10 invalida sus eventos
+        al cambiar una ruta y los reconstruye al iniciar la siguiente simulación.
         """
         if len(self._historial_deshacer) == 0:
             return False
 
-        estado_actual = self._copiar_estado_modificable()
         anterior = self._historial_deshacer.pop()
-        self._historial_rehacer.append(estado_actual)
-        self._restaurar_estado_modificable(anterior)
+        self._aplicar_cambio_historial(anterior, False)
+        self._historial_rehacer.append(anterior)
         return True
 
     def rehacer(self):
-        """R9: reaplica el cambio deshecho más reciente; retorna si lo hizo."""
+        """R9: reaplica la acción más reciente en O(1) amortizado."""
         if len(self._historial_rehacer) == 0:
             return False
 
-        estado_actual = self._copiar_estado_modificable()
         siguiente = self._historial_rehacer.pop()
-        self._historial_deshacer.append(estado_actual)
-        self._restaurar_estado_modificable(siguiente)
+        self._aplicar_cambio_historial(siguiente, True)
+        self._historial_deshacer.append(siguiente)
         return True
 
     def proximo_bus(self, estacion, bus, hora):
@@ -1785,28 +1817,38 @@ class Red:
         """
         R6: devuelve las k estaciones abiertas con mas buses diarios.
 
-        La lista _ranking contiene [nombre, cantidad] y se mantiene ordenada
-        por cantidad descendente y nombre ascendente. El ranking se calcula una
-        sola vez al cargar los archivos, por lo que cambios futuros pueden
-        recalcularlo en O(h log h).
+        _ranking guarda [nombre, cantidad, indice_estacion], en orden por
+        cantidad descendente y nombre ascendente. El indice permite consultar
+        si la estacion sigue abierta en O(1), sin otra busqueda binaria.
 
-        Complejidad: construir el ranking O(h + n log n), consultar ranking(k)
-        O(k), y rechazar k <= 0 en O(1).
+        La reconstruccion cuesta         O(H + R + J log J + U log U + U log N);
+        la consulta revisa M filas hasta reunir k estaciones abiertas: O(M),
+        con O(k) espacio de respuesta. Rechazar k <= 0 cuesta O(1).
 
-        Se usa una lista cacheada porque el ranking cambia poco y una consulta
-        frecuente no debe volver a contar los 140000 horarios.
+        La frecuencia del servicio se estima por su mayor cantidad de horarios
+        en una parada y se asigna a sus paradas actuales, incluidas las nuevas
+        de R7. Cerrar/reabrir filtra el cache en vivo; editar recorridos lo
+        invalida. R10 no lo modifica.         Merge sort ordena las J paradas porque
+        mapas y conjuntos estan prohibidos en el motor.
         Retorna solamente nombres: [nombre1, nombre2, ...], como espera el
         front para R6. Los conteos internos siguen disponibles en _ranking.
         """
         if k <= 0:
             return []
 
+        if self._ranking_desactualizado:
+            self._ranking = self._construir_ranking()
+            self._ranking_desactualizado = False
+
         resultados = []
         posicion = 0
         while posicion < len(self._ranking) and len(resultados) < k:
             estacion = self._ranking[posicion]
-            posicion_estado = self._posicion_estacion(estacion[0])
-            if posicion_estado != -1 and self._abiertas[posicion_estado]:
+            indice_estacion = estacion[2]
+            if (
+                indice_estacion != -1
+                and self._abiertas[indice_estacion]
+            ):
                 resultados.append(estacion[0])
             posicion += 1
 
@@ -1923,39 +1965,131 @@ class Red:
 
     def _construir_ranking(self):
         """
-        Cuenta entradas de horario por estacion y crea un ranking cacheado.
+        Estima los buses diarios de cada servicio y los asigna a sus paradas.
 
-        Complejidad: O(h*u + u log u), donde h es el numero de horarios y u
-        es la cantidad de estaciones unicas. La cuenta recorre una lista corta
-        al cargar una sola vez y luego merge sort crea el ranking.
-
-        Se eligio una lista cacheada porque es permitida y evita repetir este
-        trabajo en cada consulta ranking(k). Sin cache, una consulta frecuente
-        volveria a procesar todas las filas h en O(h).
+        El máximo de horarios por parada representa los viajes diarios del
+        servicio; así, una parada agregada en R7 también hereda su frecuencia.
+        Los servicios y horarios están ordenados, por lo que agruparlos cuesta
+        O(H). Emparejar rutas cuesta O(R); ordenar las J paradas actuales y
+        agruparlas cuesta O(J log J); ordenar el ranking cuesta O(U log U).
+        Esta caché solo se invalida con ediciones de recorrido: R10 no cambia
+        datos ni conteos de R6.
         """
-        conteos = []
-        for fila in self._horarios:
-            estacion = fila[1]
-            posicion = self._buscar_conteo(conteos, estacion)
-            if posicion == -1:
-                conteos.append([estacion, 1])
-            else:
-                conteos[posicion][1] += 1
+        frecuencias_servicio = []
+        posicion_horario = 0
+        while posicion_horario < len(self._horarios):
+            servicio = self._horarios[posicion_horario][0]
+            frecuencia_maxima = 0
+            while (
+                posicion_horario < len(self._horarios)
+                and self._horarios[posicion_horario][0] == servicio
+            ):
+                estacion = self._horarios[posicion_horario][1]
+                cantidad = 0
+                while (
+                    posicion_horario < len(self._horarios)
+                    and self._horarios[posicion_horario][0] == servicio
+                    and self._horarios[posicion_horario][1] == estacion
+                ):
+                    cantidad += 1
+                    posicion_horario += 1
+                if cantidad > frecuencia_maxima:
+                    frecuencia_maxima = cantidad
+            frecuencias_servicio.append([servicio, frecuencia_maxima])
 
+        conteos_parada = []
+        posicion_frecuencia = 0
+        for ruta in self._rutas_info:
+            while (
+                posicion_frecuencia < len(frecuencias_servicio)
+                and frecuencias_servicio[posicion_frecuencia][0] < ruta[0]
+            ):
+                posicion_frecuencia += 1
+
+            frecuencia = 0
+            if (
+                posicion_frecuencia < len(frecuencias_servicio)
+                and frecuencias_servicio[posicion_frecuencia][0] == ruta[0]
+            ):
+                frecuencia = frecuencias_servicio[posicion_frecuencia][1]
+
+            for estacion in ruta[1]:
+                conteos_parada.append([estacion, frecuencia])
+
+        conteos_parada = self._ordenar_conteos_parada(conteos_parada)
+        conteos = []
+        posicion = 0
+        while posicion < len(conteos_parada):
+            estacion = conteos_parada[posicion][0]
+            cantidad = 0
+            while (
+                posicion < len(conteos_parada)
+                and conteos_parada[posicion][0] == estacion
+            ):
+                cantidad += conteos_parada[posicion][1]
+                posicion += 1
+            if cantidad > 0:
+                conteos.append(
+                    [estacion, cantidad, self._posicion_estacion(estacion)]
+                )
         return self._ordenar_ranking(conteos)
 
-    def _buscar_conteo(self, conteos, estacion):
-        # Busqueda lineal temporal de la lista de conteos.
-        # El costo se acepta solo en la carga inicial; la consulta ranking usa
-        # el resultado cacheado y tarda O(k).
-        posicion = 0
-        while posicion < len(conteos):
-            if conteos[posicion][0] == estacion:
-                return posicion
-            posicion += 1
-        return -1
+    @classmethod
+    def _ordenar_conteos_parada(cls, filas):
+        """Ordena [estacion, frecuencia] por nombre en O(J log J)."""
+        if len(filas) < 2:
+            return filas
+
+        medio = len(filas) // 2
+        izquierda = cls._ordenar_conteos_parada(filas[:medio])
+        derecha = cls._ordenar_conteos_parada(filas[medio:])
+        resultado = []
+        i = 0
+        j = 0
+        while i < len(izquierda) and j < len(derecha):
+            if izquierda[i][0] <= derecha[j][0]:
+                resultado.append(izquierda[i])
+                i += 1
+            else:
+                resultado.append(derecha[j])
+                j += 1
+        while i < len(izquierda):
+            resultado.append(izquierda[i])
+            i += 1
+        while j < len(derecha):
+            resultado.append(derecha[j])
+            j += 1
+        return resultado
+
+    @classmethod
+    def _ordenar_nombres(cls, nombres):
+        """Ordena nombres para agrupar frecuencias en O(h log h), O(h) espacio."""
+        if len(nombres) < 2:
+            return nombres
+
+        mitad = len(nombres) // 2
+        izquierda = cls._ordenar_nombres(nombres[:mitad])
+        derecha = cls._ordenar_nombres(nombres[mitad:])
+        resultado = []
+        i = 0
+        j = 0
+        while i < len(izquierda) and j < len(derecha):
+            if izquierda[i] <= derecha[j]:
+                resultado.append(izquierda[i])
+                i += 1
+            else:
+                resultado.append(derecha[j])
+                j += 1
+        while i < len(izquierda):
+            resultado.append(izquierda[i])
+            i += 1
+        while j < len(derecha):
+            resultado.append(derecha[j])
+            j += 1
+        return resultado
 
     def _buscar_en_lista(self, valores, valor):
+        """Busca un valor en una secuencia ordenada de ruta en O(P) peor caso."""
         posicion = 0
         while posicion < len(valores):
             if valores[posicion] == valor:
@@ -1973,6 +2107,7 @@ class Red:
         return -1
 
     def _cambiar_estado_estacion(self, nombre, abierta):
+        """R8: busca en O(log N); el registro delta de R9 cuesta O(1)."""
         estacion = self._normalizar(nombre)
         posicion = self._posicion_estacion(estacion)
         if posicion == -1:
@@ -1980,32 +2115,33 @@ class Red:
         if self._abiertas[posicion] == abierta:
             return False
 
-        self._guardar_cambio()
+        estado_anterior = self._abiertas[posicion]
+        self._guardar_cambio(
+            ["estado", posicion, estado_anterior, abierta]
+        )
         self._abiertas[posicion] = abierta
+        self._resultado_r10 = []
         return True
 
-    def _guardar_cambio(self):
-        """Guarda el snapshot previo y elimina la rama de rehacer (R9)."""
-        self._historial_deshacer.append(self._copiar_estado_modificable())
+    def _guardar_cambio(self, cambio):
+        """Guarda una acción delta en la pila y descarta la rama de rehacer."""
+        self._historial_deshacer.append(cambio)
         self._historial_rehacer = []
 
-    def _copiar_estado_modificable(self):
-        """Copia listas mutables en O(n + Q), con Q paradas totales."""
-        rutas = []
-        for informacion in self._rutas_info:
-            paradas = []
-            for parada in informacion[1]:
-                paradas.append(parada)
-            rutas.append([informacion[0], paradas])
+    def _aplicar_cambio_historial(self, cambio, rehacer):
+        """Aplica una acción delta de R9 en O(1), sin copiar la red."""
+        posicion_valor = 3 if rehacer else 2
+        if cambio[0] == "ruta":
+            self._rutas_info[cambio[1]][1] = cambio[posicion_valor]
+            self._invalidar_ranking()
+            self._invalidar_eventos_horario()
+        else:
+            self._abiertas[cambio[1]] = cambio[posicion_valor]
+        self._resultado_r10 = []
 
-        estados = []
-        for abierta in self._abiertas:
-            estados.append(abierta)
-        return [rutas, estados]
-
-    def _restaurar_estado_modificable(self, snapshot):
-        self._rutas_info = snapshot[0]
-        self._abiertas = snapshot[1]
+    def _invalidar_ranking(self):
+        """Marca R6 para reconstrucción diferida tras una edición de recorrido."""
+        self._ranking_desactualizado = True
 
     def _posicion_estacion(self, estacion):
         inicio = 0
@@ -2163,10 +2299,7 @@ class Red:
 
     @classmethod
     def _ordenar_ranking(cls, filas):
-        """
-        Ordena [estacion, conteo] por conteo descendente y nombre ascendente.
-        Complejidad O(u log u), con u estaciones unicas.
-        """
+        """Ordena [estacion, conteo, indice] en O(u log u), espacio O(u)."""
         if len(filas) < 2:
             return filas
 

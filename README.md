@@ -1,288 +1,131 @@
 # Planeador TransMilenio
 
-Aplicación de escritorio para consultar estaciones de TransMilenio. El motor y
-la interfaz están separados para facilitar la incorporación de los requerimientos
+Aplicación de escritorio en Python. El paquete `motor/` contiene la lógica de
+R1–R10; `front/` recoge datos y presenta los resultados, sin recalcular reglas
+del negocio.
 
 ## Ejecutar
 
-Desde la carpeta raíz del repositorio, con Python 3:
+Desde la carpeta del proyecto:
+
 ```bash
 python -m front
 ```
-La aplicación lee `datos/estaciones.csv`.
 
-### Estructura de datos
+La aplicación carga `datos/estaciones.csv`, `datos/rutas.csv` y
+`datos/horarios.csv`.
 
-El motor usa **dos listas paralelas**, que son la estructura permitida para el
-ejercicio:
+## Reglas del motor
 
-- `_estaciones`: contiene los nombres distintos y ordenados alfabéticamente.
-- `_abiertas`: contiene `True` o `False` en la misma posición que cada estación.
+Dentro de `motor/` se usan listas, ciclos, funciones propias y los módulos
+estándar `csv` y `random`. No se usan `dict`, `set`, `sorted`, `list.sort`,
+`min`, `max`, búsquedas `in` sobre listas, `.index()`, `.count()`, `bisect`,
+`heapq` ni módulos externos. Por eso los índices se implementan con listas y
+búsqueda binaria o recorridos explícitos. Las búsquedas de texto consideran
+mayúsculas y espacios externos equivalentes.
 
-No se usan `dict`, `set`, `sorted`, `list.sort`, `heapq`, `bisect` ni otras
-bibliotecas externas en `motor/`. Las búsquedas no distinguen mayúsculas ni
-espacios externos. Aquí `n` significa la cantidad de estaciones distintas y
-`r` significa la cantidad de estaciones producidas en un rango.
+Notación: `N` estaciones, `R` servicios direccionales, `P` máximo de paradas
+por servicio, `H` filas de horarios, `U` estaciones rankeadas, `J` pares
+servicio-parada en los recorridos actuales, `T` minutos simulados, `G` grupos
+de pasajeros. Los costos de comparar cadenas suponen
+longitudes acotadas; si `L` es la longitud del texto, normalizarlo cuesta
+`O(L)`.
 
-### R1 — Consultar estado
+| Req. | Función y estructura | Complejidad y motivo |
+|---|---|---|
+| R1 | `Red.estado`: listas paralelas ordenadas `_estaciones` y `_abiertas`. | Consulta `O(log N)` por búsqueda binaria; una lista sin ordenar requeriría `O(N)`. |
+| R2 | `Red.autocompletar`: búsqueda binaria del primer prefijo y recorrido contiguo. La interfaz combina sugerencias y estado en una sola barra. | `O(log N + M)`, donde `M` son los nombres revisados para encontrar hasta `k` resultados. Evita examinar toda la red cuando el prefijo es selectivo. |
+| R3 | `Red.rango`: la misma lista ordenada, búsqueda binaria del límite y recorrido en la dirección solicitada. | `O(log N + Q)`, donde `Q` son las estaciones examinadas en el rango; construir la salida es necesariamente proporcional a lo examinado. Admite orden alfabético inverso. |
+| R4 | `Red.proximo_bus`: horarios ordenados por servicio, estación y minuto; dos búsquedas binarias. | `O(log B + V log H)`, donde `B` son identificadores de servicio, `V` las variantes del bus solicitado y `H` todas las filas de horarios. La búsqueda binaria evita escanear las horas anteriores. |
+| R5 | `Red.viaje`: listas de paradas en orden de recorrido y búsqueda lineal de origen, destino y conexiones. Compara viajes directos y de un transbordo y devuelve el de menos paradas. | `O(log N + R²P² + R²P log N)`; las listas preservan el orden y cumplen las restricciones. Mantiene solo el mejor resultado, con un máximo de dos segmentos (`O(1)` espacio de salida). |
+| R6 | `Red.ranking`: agrupa horarios por servicio, estima sus viajes diarios con la mayor frecuencia observada en una parada y asigna esa frecuencia a cada parada actual (incluidas las añadidas en R7). El ranking queda cacheado; el estado abierto se consulta en vivo. | Construcción `O(H + R + J log J + U log U + U log N)`; consulta `O(M)` para revisar `M` filas hasta reunir `k` estaciones abiertas. Cerrar/reabrir filtra el cache sin reconstruirlo; una edición R7 lo invalida y se reconstruye al consultar R6. R10 no lo modifica. |
+| R7 | `Red.recorrido`, `agregar_parada` y `quitar_parada`: listas de paradas; solo se editan estaciones existentes y un servicio direccional a la vez. | Consultar `O(R + P)`; quitar `O(R + P)`; agregar `O(R + P + log N)` por validar que la estación existe. R9 guarda referencias a las versiones anterior/nueva, sin copiar el resto de la red. Una edición invalida las cachés de R6 y el índice horario R10; ambos se reconstruyen de forma diferida al consultar R6 o iniciar la siguiente simulación. |
+| R8 | `Red.cerrar` y `Red.reabrir`: el estado se guarda en `_abiertas`, en paralelo con `_estaciones`. | Buscar la estación `O(log N)` y guardar el cambio delta en `O(1)`. La lista paralela permite encontrar y modificar el estado con el mismo índice. |
+| R9 | `Red.deshacer` y `Red.rehacer`: dos listas de acciones delta usadas como pilas LIFO. | Aplicar y mover una acción cuesta `O(1)` amortizado: cambios de estado guardan un booleano; ediciones de ruta guardan referencias a las listas antes/después. Una edición/deshacer/rehacer de ruta invalida las cachés R6 y R10. Espacio `O(C + PΣ)`, donde `C` son cambios y `PΣ` la suma de paradas en versiones de ruta conservadas. |
+| R10 | `Red.simular_dia`: eventos de horario, matriz de colas estación-servicio, listas FIFO de grupos, manifiestos de viaje, máscaras de bits de paradas y posiciones de salida precalculadas por minuto. | Ver el análisis de R10 abajo. Los grupos agregan pasajeros que llegan juntos y evitan crear una entrada por persona. |
 
-`Red.estado(nombre)` devuelve `(existe, abierta)`.
+`Red.viaje` busca, según el alcance actual, viajes directos o con un único
+transbordo. No promete encontrar itinerarios que necesiten más transbordos.
+La consigna excluye R5 de la comparación de crecimiento al duplicar el tamaño
+de la red; su estructura y complejidad siguen documentadas arriba.
 
-- Usa búsqueda binaria sobre `_estaciones`.
-- Complejidad: **O(log n)**.
-- La búsqueda binaria fue elegida porque la lista está ordenada. Evita revisar
-  las estaciones una por una, como haría una búsqueda lineal en **O(n)**.
+### Ordenamientos usados
 
-### R2 — Autocompletar junto con R1
+`_ordenar`, `_ordenar_rutas`, `_ordenar_horarios`, `_ordenar_eventos_horario`,
+`_ordenar_nombres` y `_ordenar_ranking` implementan merge sort. Para `X` filas
+cuesta `O(X log X)` tiempo y `O(X)` memoria auxiliar en el peor caso. Se elige
+porque los ordenamientos integrados están prohibidos y merge sort garantiza
+ese costo en todos los casos; un ordenamiento cuadrático sería `O(X²)`.
 
-`Red.autocompletar(prefijo, k)` devuelve hasta `k` estaciones abiertas que
-comienzan por el prefijo, en orden alfabético.
+### R10 — detalle de simulación y costos
 
-- Usa búsqueda binaria para localizar el inicio y luego recorre coincidencias.
-- Complejidad: **O(log n + m)**, donde `m` es la cantidad revisada hasta
-  completar `k` resultados o terminar las coincidencias.
-- Es más eficiente que revisar y comparar todas las estaciones desde el inicio,
-  que sería **O(n)**.
-- La interfaz usa una sola barra `Combobox`: al escribir llama R2 para mostrar
-  sugerencias y llama R1 al escribir, seleccionar o presionar Enter.
+`simular_fila(llegadas, frecuencia, capacidad)` modela una sola cola FIFO:
+devuelve `[abordados, espera_promedio, espera_maxima, cola_maxima,
+no_abordados]`. Usa lotes `[minuto_de_llegada, cantidad]` y un índice de cabeza.
+Cuesta `O(T + G)` tiempo y `O(G)` espacio.
 
-### R3 — Listar rango
+`Red.simular_dia(semilla=None)` usa los horarios reales de `horarios.csv` y
+simula 1440 minutos. La semilla hace repetible el sorteo. Cada grupo elige al
+azar entre destinos alcanzables por las opciones directas o de un transbordo
+que tienen salidas programadas utilizables. La primera salida debe estar
+dentro de 30 minutos; para transbordos, la salida de conexión también debe
+estar dentro de 30 minutos. Si no existe esa opción, no se genera el grupo.
+El límite aplica a la espera por salida programada, no a la espera causada por
+falta de capacidad.
 
-`Red.rango(desde, hasta)` devuelve las estaciones abiertas dentro de un intervalo
-inclusive.
+Estructuras y costos:
 
-- Si `desde <= hasta`, usa recorrido ascendente.
-- Si `desde > hasta`, usa recorrido descendente inverso.
-- Usa búsqueda binaria para ubicar el extremo inicial.
-- Complejidad: **O(log n + r)**.
-- Crear la respuesta requiere recorrer las `r` estaciones; la alternativa de
-  barrer toda la red desde la primera estación sería **O(n)**.
+- Los eventos `[minuto, viaje, estación, orden]` se ordenan una vez al cargar
+  los datos. Construirlos cuesta `O(H·P + H log H)` y `O(H)` espacio: `P`
+  representa la búsqueda de cada estación en el recorrido. Los CSV no tienen
+  identificador de vehículo; los viajes se reconstruyen alineando la primera
+  hora de cada parada, luego la segunda, etc. Si R7 cambia un recorrido, el
+  índice se invalida y se reconstruye en la siguiente simulación, no en cada
+  edición o acción de deshacer.
+- Durante la simulación, los eventos se indexan por viaje/estación y las
+  salidas por estación/servicio. Las máscaras de bits indican las estaciones
+  posteriores de cada evento. El índice por viaje ocupa `O(VN)` para permitir
+  consultar una conexión en `O(1)`, en vez de volver a recorrer sus paradas.
+- Las posiciones de salida se precalculan por minuto para cada uno de los `A`
+  pares estación-servicio con horarios: `O(NR + 1440A + H)` tiempo y
+  `O(1440A)` espacio. Esta tabla evita búsquedas binarias repetidas en la
+  consulta más frecuente.
+- Los itinerarios directos y con un transbordo se preparan por origen. Si `C`
+  es el total de combinaciones de tramos y `D·K` el trabajo de agrupar `D`
+  destinos en `K` combinaciones de servicio, el costo es `O(C + D·K)` por
+  origen activo. Precalcular evita reconstruir las combinaciones en cada
+  minuto.
+- R9 guarda acciones delta, no snapshots completos: deshacer/cerrar una
+  estación no copia todas las estaciones y rutas. Al cambiar una ruta se marca
+  el índice horario como desactualizado; se reconstruye antes de la siguiente
+  simulación para que R7 y R10 vean el mismo recorrido.
+- La simulación cuesta `O(1440N + W + B + Q)`, además de los índices y el
+  precálculo. `W` cuenta salidas consideradas en las ventanas de espera, `B`
+  destinos comprobados mediante máscaras y `Q` grupos recorridos en colas y
+  manifiestos. Las colas se agrupan por estación y servicio; cada llegada de
+  bus conserva en orden los grupos que no puede abordar. El procesamiento
+  depende de grupos, no de pasajeros individuales.
+- Espacio total: `O(H + VN + NR + 1440A + D + G)`, donde `G` es el número de
+  grupos en espera o a bordo. La capacidad del bus se configura de forma
+  universal.
 
-### R4 — Próximo bus
-
-`Red.proximo_bus(estacion, bus, hora)` devuelve el primer horario posterior
-o igual a la hora indicada, con formato `"HH:MM"`, o `None`.
-
-- Los horarios se cargan en `_horarios` como
-  `[ruta, estacion, minuto, texto]`.
-- El usuario puede indicar el bus base, por ejemplo `B74`; el motor considera
-  sus servicios identificados en el CSV como `B74-1`, `B74-2` y `B74-3`.
-- La lista se ordena por ruta, estación y minuto con merge sort.
-- Complejidad: **O(log b + v log h)**, donde `b` es la cantidad de buses
-  únicos, `v` la cantidad de variantes del bus y `h` las filas de horarios.
-- Es más eficiente que recorrer todos los horarios desde el inicio. Si se
-  recorrieran secuencialmente, la consulta costaría **O(h)**.
-- La pestaña "Próximo bus" recoge estación, bus y hora actual y usa esta
-  función; solamente presenta el horario devuelto o un mensaje si no hay bus.
-
-### R5 — Planear viaje
-
-`Red.viaje(origen, destino)` devuelve una lista de segmentos
-`[bus, estacion_subida, estacion_bajada]`, por ejemplo `["B74", "AGUAS",
-"CALLE 19"]`.
-
-- `_rutas_info` almacena cada servicio direccional y sus paradas como
-  `[id_servicio, [paradas...]]`. El motor utiliza ese identificador para
-  encontrar el recorrido, pero devuelve el nombre de bus al pasajero: por
-  ejemplo, convierte `B74-1` y `B74-2` en `B74`.
-- El motor evalúa los viajes directos y los de un transbordo, y devuelve el que
-  recorre menos paradas. Solo cuenta trayectos que avanzan en el orden del
-  servicio direccional, y el transbordo debe ser una estación abierta.
-- Las paradas se guardan en listas en el orden del CSV. La búsqueda de una
-  estación dentro de una lista es lineal, **O(P)**; se eligió porque las listas
-  son la estructura permitida por las reglas del motor y conservan directamente
-  el orden de recorrido. No se usan diccionarios, conjuntos ni índices externos.
-- **Complejidad temporal de consulta: O(log n + R² × P² + R² × P × log n)**:
-  se prueban pares de servicios y posibles transbordos con búsquedas lineales
-  en sus listas, y se verifica si los transbordos están abiertos mediante
-  búsqueda binaria. `n` es el número de estaciones, `R` el número de servicios
-  direccionales y `P` la cantidad máxima de paradas por servicio. El caso
-  directo cuesta O(R × P), dominado por las comparaciones de transbordos.
-- **Espacio de la respuesta: O(1)**, pues se conserva únicamente el mejor plan,
-  que contiene como máximo dos segmentos. El almacenamiento de rutas ya
-  cargadas es **O(R × P)**.
-- Revisar todos los candidatos y comparar su cantidad de paradas es necesario
-  para asegurar que un transbordo no gane a un viaje directo más corto.
-- La pestaña "Planear viaje" muestra el bus de cada segmento; no calcula rutas ni
-  transbordos dentro del frontend.
-
-### R6 — Ranking
-
-`Red.ranking(k)` devuelve una lista con los nombres de las `k` estaciones
-abiertas con más registros de buses al día.
-
-- `_ranking` es una lista cacheada `[estacion, conteo]`, ordenada por conteo
-  descendente y nombre ascendente.
-- Construcción: **O(h × u + u log u)** y consulta: **O(k)**, donde `h` cuenta
-  filas de horarios y `u` estaciones únicas.
-- El cache evita contar nuevamente los cientos de miles de horarios en cada
-  consulta frecuente. Un conteo desde `horarios.csv` para cada solicitud sería
-  innecesariamente lento.
-- La pestaña "Ranking" pide solo `k` al motor y presenta los nombres devueltos.
-
-### R7 — Consultar y editar recorridos
-
-El panel "Operar red" permite elegir un bus y luego uno de sus servicios
-direccionales (por ejemplo, `B74-1`). Muestra la secuencia del CSV y la misma
-secuencia al revés. Al editar, se modifica solo el servicio seleccionado:
-
-- `Red.recorrido(ruta, al_reves=False)` devuelve una copia del recorrido.
-  Busca el servicio en una lista y copia sus `P` paradas: **O(R + P)**.
-- `Red.agregar_parada(ruta, nueva, despues_de)` solo acepta estaciones que ya
-  existen en `estaciones.csv`, y exige una parada siguiente para insertar la
-  nueva entre dos paradas existentes. No crea una estación ni cambia otros
-  recorridos.
-- `Red.quitar_parada(ruta, estacion)` quita la parada de ese servicio, pero
-  conserva la estación en la red y en los demás recorridos.
-- Ambas modificaciones cuestan **O(R + P + N + S)** por localizar servicio y
-  estación, reconstruir su lista y guardar el historial. `R` es la cantidad de
-  servicios direccionales, `P` sus paradas máximas, `N` las estaciones y `S`
-  todas las paradas almacenadas en la red.
-- Las listas preservan el orden del servicio y cumplen las restricciones del
-  motor; se usan recorridos lineales porque no se permite un índice `dict`/`set`.
-
-### R8 — Cerrar y reabrir estaciones
-
-`Red.cerrar(nombre)` y `Red.reabrir(nombre)` cambian el booleano asociado a la
-estación en `_abiertas`. La estación sigue existiendo, pero las búsquedas y
-operaciones que requieren una estación abierta respetan su estado.
-
-- Encontrar la estación cuesta **O(log N)** mediante búsqueda binaria.
-- Guardar el snapshot para que R9 pueda revertirlo cuesta **O(N + S)** tiempo y
-  espacio por cambio: una copia de estados y de las listas de recorridos.
-- El panel de operaciones deja disponible solo la acción válida (cerrar o
-  reabrir) según el estado actual.
-
-### R9 — Deshacer y rehacer
-
-`Red.deshacer()` y `Red.rehacer()` usan dos listas como pilas LIFO. Cada cierre,
-reapertura o edición guarda un snapshot de estaciones y recorridos. Deshacer
-restaura el snapshot anterior; rehacer lo vuelve a aplicar. Un cambio nuevo
-después de deshacer borra la pila de rehacer.
-
-- Consultar si hay una acción en la pila y retirarla cuesta **O(1)**.
-- Copiar el estado para undo/redo cuesta **O(N + S)** tiempo y espacio por
-  operación; el historial completo puede ocupar **O(C × (N + S))**, con `C`
-  cambios registrados.
-- Los botones de flecha y Ctrl+Z/Ctrl+Y del panel llaman estos métodos del
-  motor y refrescan los recorridos y el estado de estación mostrados.
-
-### R10 — Simulación de red durante un día
-
-`simular_fila(llegadas, frecuencia, capacidad)` simula una fila FIFO sencilla
-y devuelve `[abordados, espera_promedio, espera_maxima, cola_maxima,
-no_abordados]`. `llegadas[t]` es el número de pasajeros que aparece en el minuto
-`t`; hay un bus en el minuto cero y cada `frecuencia` minutos. La fila se
-representa con grupos `[minuto_de_llegada, cantidad]` y un índice de cabeza, así
-se conserva el orden sin mover toda la lista tras cada abordaje.
-
-- Es una función aislada para el ejercicio de una sola fila; el panel R10 usa
-  `Red.simular_dia()` y los eventos reales de `horarios.csv`.
-- Complejidad: **O(T + G)** tiempo y **O(G)** espacio, donde `T` es la duración
-  en minutos y `G` los grupos de llegada.
-- La espera promedio se pondera por pasajeros. Quienes siguen en la fila al
-  cierre se cuentan como no abordados y su espera incompleta se mide hasta el
-  final del periodo.
-
-El panel "Simulación R10" ejecuta `Red.simular_dia()` por 1440 minutos y usa las
-llegadas de los buses de `horarios.csv`, no una frecuencia sintética. El flujo
-global genera pasajeros en todas las estaciones abiertas; cada estación puede
-sobrescribir esa tasa. El botón "Aplicar a todas" aplica el flujo global y
-restablece las sobrescrituras locales. Cada grupo generado en una estación
-elige al azar, con probabilidad uniforme, entre los destinos que tienen un
-itinerario topológico y un servicio programado utilizable. Solo se genera
-demanda si algún bus que sirve el trayecto puede salir dentro de los siguientes
-30 minutos y pasar por el destino; para un transbordo, el siguiente servicio
-también debe salir dentro de 30 minutos de la conexión y llegar al destino.
-Si no hay ningún itinerario así, no se genera ese grupo. El límite se aplica a la espera
-por una salida programada, no a la espera total: con capacidad insuficiente,
-un pasajero aún puede esperar más de 30 minutos.
-
-El argumento opcional `semilla` de `simular_dia(semilla)` permite repetir el
-mismo sorteo. Los aumentos por hora pico se suman al flujo en todas las
-estaciones abiertas, pero también respetan la disponibilidad de los horarios.
-`configurar_capacidad_universal(capacidad)` fija un único cupo que se aplica a
-todos los buses y recorridos. La interfaz presenta el total de pasajeros y las
-métricas por estación, incluida la cantidad que terminó su viaje en esa
-estación (no cuenta bajadas de transbordo como destino final).
-
-**Estructuras del motor:** `horarios.csv` se prepara como eventos
-`[minuto, viaje, estación, orden_de_parada]` ordenados por merge sort. Cada
-llegada identifica un viaje y hace avanzar su manifiesto. Las colas usan una
-matriz de listas FIFO indexada por estación y servicio; cada lote contiene
-`[minuto_llegada, destino_final, próxima_estación_de_bajada,
-servicio_de_transbordo, cantidad]`. Un índice de cabeza permite consumir la
-cola sin eliminar del inicio de la lista. Los pasajeros se guardan por grupos,
-no como objetos individuales. Cada viaje mantiene la capacidad universal,
-ocupación y su manifiesto; al llegar a un destino, los pasajeros completan el recorrido, y
-quienes deben transbordar entran en la cola del siguiente servicio.
-La métrica de llegadas a destino se acumula por estación al completar cada
-lote, en **O(1)** por lote, y se devuelve como la última columna de cada fila
-de estación; el último valor del resumen es su total en la red. Los itinerarios
-se agrupan por servicio y transbordo. En cada minuto, máscaras de bits
-identifican rápidamente qué destinos posteriores puede alcanzar cada salida.
-Al abordar, el motor vuelve a validar el recorrido real del viaje para evitar
-que un pasajero tome una salida que no llega a su destino o conexión. Si no
-existe un itinerario con salidas dentro de la ventana permitida, ese grupo no
-se genera.
-
-El resumen de la simulación devuelve
+El resumen R10 es
 `[generados, abordajes, no_abordados, espera_promedio, espera_maxima,
-cola_maxima, pasajeros_en_red, llegadas_a_destino]`. Cada fila de estación
-devuelve `[nombre, generados, esperando_al_final, cola_maxima, espera_promedio,
-espera_maxima, no_abordados, llegadas_a_destino]`.
+cola_maxima, pasajeros_en_red, llegadas_a_destino]`. Cada fila de estación es
+`[nombre, generados, esperando_al_final, cola_maxima, espera_promedio,
+espera_maxima, no_abordados, llegadas_a_destino]`. El conteo de llegadas a
+destino excluye bajadas de transbordo.
 
-**Emparejamiento de viajes:** `horarios.csv` no contiene identificadores de
-vehículo. Para reconstruir cada viaje, el motor asocia la primera hora de cada
-parada al primer viaje, la segunda hora al segundo, etc. Esta es una
-aproximación determinista de la información disponible, no una garantía de que
-cada fila pertenezca al mismo vehículo. Los eventos fuera del día simulado se
-omiten. Los archivos fuente no se modifican.
+## Interfaz
 
-- Los eventos se indexan por viaje y estación, y las salidas por estación y
-  servicio. Máscaras de bits guardan las estaciones posteriores de cada evento.
-  Crear estos índices cuesta **O(H + V × N + N × R)** tiempo y espacio, donde
-  `H` es la cantidad de eventos horarios, `V` los viajes reconstruidos, `N`
-  las estaciones y `R` los servicios.
-- Para no ejecutar una búsqueda binaria por cada destino y minuto, el motor
-  precalcula la posición de la primera salida posterior a cada minuto para
-  cada par estación-servicio con horarios. Si `S` es la cantidad de esos pares,
-  este índice cuesta **O(1440 × S + H)** tiempo y **O(1440 × S)** espacio.
-- Los itinerarios directos y de un transbordo se preparan una vez por origen.
-  Si `C` cuenta los tramos candidatos y `D × K` el trabajo de agrupar `D`
-  opciones de destino en `K` combinaciones de servicios, su coste es
-  **O(C + D × K)** por origen con demanda posible. Esto evita reconstruir
-  combinaciones de recorridos dentro de cada minuto.
-- La simulación cuesta **O(1440 × N + W + B + Q)**, además de los índices y
-  el precálculo anteriores. `W` cuenta las salidas examinadas por las
-  combinaciones de servicio dentro de ventanas de 30 minutos, `B` las opciones
-  de destino comprobadas con máscaras y `Q` los grupos de pasajeros revisados
-  al llegar los buses. El número de pasajeros individuales no multiplica el
-  trabajo: las llegadas y abordajes se procesan por lotes.
-- El espacio total de la simulación es **O(H + V × N + N × R + 1440 × S + D
-  + G)**, donde `G` es la cantidad de grupos en colas y manifiestos. El límite
-  de 30 minutos restringe la espera por salida programada; una capacidad
-  insuficiente todavía puede causar una espera mayor.
-- La espera se pondera por cantidad de pasajeros. Los no abordados cuentan a
-  quienes siguen esperando al cierre; pasajeros que ya abordaron pero siguen
-  a bordo se incluyen en el total de personas en la red.
+`front/__main__.py` tiene una pestaña/panel por requisito: búsqueda R1–R2,
+rango R3, próximo bus R4, plan R5, ranking R6, edición R7, estado R8,
+deshacer/rehacer R9 y simulación R10. Los callbacks convierten entradas,
+llaman a `Red` y muestran las respuestas; las decisiones, validaciones y
+estructuras de datos permanecen en `motor/`.
 
-### Operaciones internas importantes
-
-- `Red.__init__`: lee el CSV y usa merge sort propio para ordenar las
-  estaciones. Complejidad: **O(n log n)** y memoria auxiliar **O(n)** durante
-  la mezcla.
-- `_posicion_insercion`: búsqueda binaria del primer elemento no menor que el
-  límite. Complejidad: **O(log n)**.
-- `_ordenar`: merge sort elegido porque las operaciones `sorted`, `.sort`,
-  `min` y `max` están prohibidas en `motor/`. Tiene **O(n log n)** en el mejor,
-  promedio y peor caso, frente a **O(n²)** de un recorrido por burbuja.
-- `_normalizar`: recorta espacios y convierte mayúsculas. Respecto a `n` es
-  **O(1)** por consulta; si `L` es la longitud del nombre, su costo es **O(L)**.
-
-Las pruebas de estos requisitos se ejecutan con:
+Las pruebas locales están en `pruebas/`:
 
 ```bash
-python -m unittest pruebas.test_r1_r3
+python -m unittest discover
 ```
-# EL PROFESOR NO VA A EVALUAR COSAS EN LA CARPETA DE PRUEBAS

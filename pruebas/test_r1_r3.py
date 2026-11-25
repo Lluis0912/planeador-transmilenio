@@ -117,6 +117,19 @@ class RedR1R3Tests(unittest.TestCase):
             ["AVENIDA JIMENEZ", "CALLE 80", "CALLE 26"],
         )
 
+    def test_ranking_se_actualiza_con_ediciones_y_no_con_r10(self):
+        ranking_inicial = self.red.ranking(4)
+        self.red.configurar_demanda_global(1)
+        self.red.simular_dia(semilla=17)
+        self.assertEqual(self.red.ranking(4), ranking_inicial)
+
+        self.red.quitar_parada("B74-1", "AVENIDA JIMENEZ")
+        self.assertNotEqual(self.red.ranking(4), ranking_inicial)
+        self.assertTrue(self.red.deshacer())
+        self.assertEqual(self.red.ranking(4), ranking_inicial)
+        self.assertTrue(self.red.rehacer())
+        self.assertNotEqual(self.red.ranking(4), ranking_inicial)
+
     def test_r7_muestra_ambos_sentidos_y_agrega_solo_estacion_existente(self):
         self.assertEqual(self.red.servicios("B74"), ["B74-1", "B74-2"])
         self.assertEqual(self.red.servicios("1-Jan"), ["1-Jan"])
@@ -140,6 +153,32 @@ class RedR1R3Tests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             self.red.agregar_parada("B74-1", "ESTACION NUEVA", "CALLE 26")
+
+    def test_r7_y_r9_actualizan_eventos_r10_al_editar_y_deshacer(self):
+        indice_servicio = self.red._indice_ruta("B74-1")
+        indice_estacion = self.red._posicion_estacion("CALLE 80")
+
+        def ordenes_parada_final():
+            ordenes = []
+            for evento in self.red._eventos_horario:
+                indice_viaje = evento[1]
+                if (
+                    self.red._viajes_horario[indice_viaje][0]
+                    == indice_servicio
+                    and evento[2] == indice_estacion
+                ):
+                    ordenes.append(evento[3])
+            return ordenes
+
+        self.assertEqual(ordenes_parada_final(), [2, 2])
+        self.red.agregar_parada("B74-1", "CALLE 45", "AVENIDA JIMENEZ")
+        self.assertTrue(self.red._eventos_horario_desactualizados)
+        self.red._asegurar_eventos_horario_actualizados()
+        self.assertEqual(ordenes_parada_final(), [3, 3])
+        self.assertTrue(self.red.deshacer())
+        self.assertTrue(self.red._eventos_horario_desactualizados)
+        self.red._asegurar_eventos_horario_actualizados()
+        self.assertEqual(ordenes_parada_final(), [2, 2])
 
     def test_r7_quita_parada_sin_borrar_estacion_de_la_red(self):
         self.red.quitar_parada("B74-1", "AVENIDA JIMENEZ")
@@ -175,8 +214,10 @@ class RedR1R3Tests(unittest.TestCase):
 
         self.red.reabrir("CALLE 26")
         self.assertEqual(self.red.estado("CALLE 26"), (True, True))
+        self.assertIn("CALLE 26", self.red.ranking(10))
         self.assertTrue(self.red.deshacer())
         self.assertEqual(self.red.estado("CALLE 26"), (True, False))
+        self.assertNotIn("CALLE 26", self.red.ranking(10))
 
     def test_r9_un_cambio_nuevo_descarta_la_rama_de_rehacer(self):
         self.red.cerrar("CALLE 26")

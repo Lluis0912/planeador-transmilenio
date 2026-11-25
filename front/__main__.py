@@ -136,6 +136,7 @@ class PlaneadorApp(tk.Tk):
         self.resultado_proximo.grid(row=3, column=0, columnspan=3, sticky="w")
 
     def _consultar_proximo(self):
+        # R4: delega la busqueda del bus y horario al motor.
         hora = self.red.proximo_bus(
             self.bus_estacion.get(),
             self.bus_codigo.get(),
@@ -170,6 +171,7 @@ class PlaneadorApp(tk.Tk):
         pestaña.rowconfigure(3, weight=1)
 
     def _consultar_viaje(self):
+        # R5: muestra los buses y tramos que devuelve Red.viaje().
         segmentos = self.red.viaje(
             self.viaje_origen.get(),
             self.viaje_destino.get(),
@@ -208,6 +210,7 @@ class PlaneadorApp(tk.Tk):
         self.lista_ranking.pack(fill="both", expand=True, pady=(12, 0))
 
     def _consultar_ranking(self):
+        # R6: consulta el ranking cacheado del motor.
         try:
             cantidad = int(self.ranking_k.get())
         except ValueError:
@@ -351,6 +354,7 @@ class PlaneadorApp(tk.Tk):
             self.parada_previa.set("")
 
     def _agregar_parada_ui(self):
+        # R7: el motor valida e inserta una parada existente en el servicio.
         try:
             self.red.agregar_parada(
                 self.servicio_edicion.get(),
@@ -365,6 +369,7 @@ class PlaneadorApp(tk.Tk):
         self._actualizar_listas_ruta()
 
     def _quitar_parada_ui(self):
+        # R7: el motor elimina la parada solo del recorrido seleccionado.
         seleccion = self.lista_ida.curselection()
         if seleccion:
             estacion = self.lista_ida.get(seleccion[0])
@@ -436,6 +441,7 @@ class PlaneadorApp(tk.Tk):
             self.boton_reabrir.configure(state="normal")
 
     def _cerrar_estacion_ui(self):
+        # R8: cambia el estado; R9 guarda solo el valor anterior como delta.
         try:
             self.red.cerrar(self.estacion_operacion.get())
         except ValueError as error:
@@ -444,6 +450,7 @@ class PlaneadorApp(tk.Tk):
         self._actualizar_estado_operacion()
 
     def _reabrir_estacion_ui(self):
+        # R8: reabre la estacion mediante el motor.
         try:
             self.red.reabrir(self.estacion_operacion.get())
         except ValueError as error:
@@ -452,6 +459,7 @@ class PlaneadorApp(tk.Tk):
         self._actualizar_estado_operacion()
 
     def _deshacer_cambio(self, evento=None):
+        # R9: delega la pila de deshacer al motor y refresca los paneles.
         if self.red.deshacer():
             mensaje = "Último cambio deshecho."
         else:
@@ -463,6 +471,7 @@ class PlaneadorApp(tk.Tk):
         return "break"
 
     def _rehacer_cambio(self, evento=None):
+        # R9: delega la pila de rehacer al motor y refresca los paneles.
         if self.red.rehacer():
             mensaje = "Cambio rehecho."
         else:
@@ -509,7 +518,7 @@ class PlaneadorApp(tk.Tk):
         ).grid(row=1, column=1, padx=(8, 0), sticky="w")
         ttk.Label(
             configuracion,
-            text="Cada grupo elige al azar otra estación como destino.",
+            text="Cada grupo elige un destino alcanzable según los horarios.",
         ).grid(row=1, column=2, columnspan=3, padx=(12, 0), sticky="w")
 
         ttk.Separator(configuracion, orient="horizontal").grid(
@@ -706,6 +715,7 @@ class PlaneadorApp(tk.Tk):
         )
 
     def _ejecutar_simulacion_r10(self):
+        # R10: ejecuta el modelo diario del motor y solo presenta sus métricas.
         try:
             self.red.configurar_capacidad_universal(
                 int(self.capacidad_universal_r10.get())
