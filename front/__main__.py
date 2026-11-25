@@ -23,6 +23,7 @@ class PlaneadorApp(tk.Tk):
         self._crear_pestana_viaje(self.pestanas)
         self._crear_pestana_ranking(self.pestanas)
         self._crear_pestana_operacion(self.pestanas)
+        self._crear_pestana_simulacion(self.pestanas)
         self.bind_all("<Control-z>", self._atajo_deshacer)
         self.bind_all("<Control-y>", self._atajo_rehacer)
         self.bind_all("<Control-Shift-Z>", self._atajo_rehacer)
@@ -481,6 +482,270 @@ class PlaneadorApp(tk.Tk):
         if self.pestanas.select() == str(self.pestana_operacion):
             return self._rehacer_cambio(evento)
         return None
+
+    def _crear_pestana_simulacion(self, pestañas):
+        # R10: formularios de demanda/capacidad y resultados; el motor genera,
+        # enruta y simula pasajeros, buses, colas, esperas y transbordos.
+        panel = ttk.Frame(pestañas, padding=10)
+        pestañas.add(panel, text="Simulación R10")
+
+        configuracion = ttk.LabelFrame(
+            panel, text="Configuración de demanda para un día", padding=8
+        )
+        configuracion.pack(fill="x")
+
+        ttk.Label(
+            configuracion,
+            text="Flujo global (pasajeros/min en cada estación)",
+        ).grid(row=0, column=0, sticky="w")
+        self.flujo_global_r10 = tk.StringVar(value="0")
+        ttk.Entry(configuracion, textvariable=self.flujo_global_r10, width=9).grid(
+            row=1, column=0, sticky="w"
+        )
+        ttk.Button(
+            configuracion,
+            text="Aplicar a todas",
+            command=self._configurar_demanda_global,
+        ).grid(row=1, column=1, padx=(8, 0), sticky="w")
+        ttk.Label(
+            configuracion,
+            text="Cada grupo elige al azar otra estación como destino.",
+        ).grid(row=1, column=2, columnspan=3, padx=(12, 0), sticky="w")
+
+        ttk.Separator(configuracion, orient="horizontal").grid(
+            row=2, column=0, columnspan=5, sticky="ew", pady=7
+        )
+        ttk.Label(configuracion, text="Estación").grid(row=3, column=0, sticky="w")
+        ttk.Label(configuracion, text="Flujo local/min (vacío = global)").grid(
+            row=3, column=1, sticky="w", padx=(8, 0)
+        )
+        self.origen_local_r10 = tk.StringVar()
+        self.flujo_local_r10 = tk.StringVar(value="")
+        self.selector_origen_local_r10 = ttk.Combobox(
+            configuracion,
+            textvariable=self.origen_local_r10,
+            values=self.red.estaciones(),
+            state="readonly",
+        )
+        self.selector_origen_local_r10.grid(row=4, column=0, sticky="ew")
+        ttk.Entry(configuracion, textvariable=self.flujo_local_r10, width=9).grid(
+            row=4, column=1, sticky="ew", padx=(8, 0)
+        )
+        ttk.Button(
+            configuracion,
+            text="Aplicar estación",
+            command=self._configurar_demanda_local,
+        ).grid(row=4, column=2, padx=(8, 0))
+        ttk.Button(
+            configuracion,
+            text="Usar global",
+            command=self._quitar_demanda_local,
+        ).grid(row=4, column=3, padx=(5, 0))
+
+        ttk.Separator(configuracion, orient="horizontal").grid(
+            row=5, column=0, columnspan=5, sticky="ew", pady=7
+        )
+        ttk.Label(configuracion, text="Pico desde").grid(row=6, column=0, sticky="w")
+        ttk.Label(configuracion, text="hasta (exclusivo)").grid(
+            row=6, column=1, sticky="w", padx=(8, 0)
+        )
+        ttk.Label(configuracion, text="Extra pasajeros/min/estación").grid(
+            row=6, column=2, sticky="w", padx=(8, 0)
+        )
+        self.pico_desde_r10 = tk.StringVar(value="14:00")
+        self.pico_hasta_r10 = tk.StringVar(value="17:00")
+        self.pico_extra_r10 = tk.StringVar(value="10")
+        ttk.Entry(configuracion, textvariable=self.pico_desde_r10, width=9).grid(
+            row=7, column=0, sticky="w"
+        )
+        ttk.Entry(configuracion, textvariable=self.pico_hasta_r10, width=9).grid(
+            row=7, column=1, sticky="w", padx=(8, 0)
+        )
+        ttk.Entry(configuracion, textvariable=self.pico_extra_r10, width=9).grid(
+            row=7, column=2, sticky="w", padx=(8, 0)
+        )
+        ttk.Button(
+            configuracion, text="Agregar pico", command=self._agregar_pico_r10
+        ).grid(row=7, column=3, padx=(8, 0))
+        ttk.Button(
+            configuracion, text="Limpiar picos", command=self._limpiar_picos_r10
+        ).grid(row=7, column=4, padx=(5, 0))
+
+        self.lista_picos_r10 = tk.Listbox(configuracion, height=3)
+        self.lista_picos_r10.grid(
+            row=8, column=0, columnspan=5, sticky="ew", pady=(6, 0)
+        )
+        for columna in range(5):
+            configuracion.columnconfigure(columna, weight=1)
+
+        ejecucion = ttk.LabelFrame(panel, text="Buses y ejecución", padding=8)
+        ejecucion.pack(fill="x", pady=(8, 0))
+        ttk.Label(ejecucion, text="Llegadas y hora de cada bus: horarios.csv").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(ejecucion, text="Capacidad común para todos los buses").grid(
+            row=0, column=1, sticky="w", padx=(8, 0)
+        )
+        self.capacidad_universal_r10 = tk.StringVar(value="80")
+        ttk.Label(ejecucion, text="Se usan horarios programados").grid(
+            row=1, column=0, sticky="w"
+        )
+        ttk.Entry(ejecucion, textvariable=self.capacidad_universal_r10, width=8).grid(
+            row=1, column=1, sticky="w", padx=(8, 0)
+        )
+        ttk.Button(
+            ejecucion,
+            text="Aplicar capacidad",
+            command=self._configurar_capacidad_r10,
+        ).grid(row=1, column=2, padx=(8, 0))
+        ttk.Button(
+            ejecucion, text="Simular 1 día", command=self._ejecutar_simulacion_r10
+        ).grid(row=1, column=3, padx=(8, 0))
+        for columna in range(4):
+            ejecucion.columnconfigure(columna, weight=1)
+
+        self.mensaje_r10 = ttk.Label(panel, text="")
+        self.mensaje_r10.pack(anchor="w", pady=(5, 0))
+        self.resumen_r10 = ttk.Label(
+            panel, text="Configura demanda y ejecuta la simulación diaria."
+        )
+        self.resumen_r10.pack(anchor="w", pady=(2, 6))
+
+        columnas = (
+            "station", "generated", "waiting", "max_queue",
+            "avg_wait", "max_wait", "not_boarded", "alighted",
+        )
+        self.tabla_r10 = ttk.Treeview(
+            panel, columns=columnas, show="headings", height=8
+        )
+        titulos = (
+            ("station", "Estación"),
+            ("generated", "Generados"),
+            ("waiting", "Esperan al final"),
+            ("max_queue", "Cola máx."),
+            ("avg_wait", "Espera prom. min"),
+            ("max_wait", "Espera máx. min"),
+            ("not_boarded", "No abordaron"),
+            ("alighted", "Llegaron a destino"),
+        )
+        for columna, titulo in titulos:
+            self.tabla_r10.heading(columna, text=titulo)
+            self.tabla_r10.column(columna, width=115, anchor="center")
+        self.tabla_r10.column("station", width=190, anchor="w")
+        self.tabla_r10.pack(fill="both", expand=True)
+
+        estaciones = self.red.estaciones()
+        if estaciones:
+            self.origen_local_r10.set(estaciones[0])
+
+    def _configurar_demanda_global(self):
+        try:
+            flujo = int(self.flujo_global_r10.get())
+            self.red.aplicar_flujo_global_a_estaciones(flujo)
+        except ValueError as error:
+            self.mensaje_r10.configure(text=str(error))
+            return
+        self.mensaje_r10.configure(
+            text="Flujo global aplicado a todas las estaciones abiertas."
+        )
+
+    def _configurar_demanda_local(self):
+        try:
+            texto_flujo = self.flujo_local_r10.get().strip()
+            flujo = int(texto_flujo) if texto_flujo != "" else None
+            self.red.configurar_demanda_estacion(
+                self.origen_local_r10.get(),
+                flujo,
+            )
+        except ValueError as error:
+            self.mensaje_r10.configure(text=str(error))
+            return
+        self.mensaje_r10.configure(
+            text="Flujo local aplicado; los destinos se eligen aleatoriamente."
+        )
+
+    def _quitar_demanda_local(self):
+        if self.red.quitar_demanda_estacion(self.origen_local_r10.get()):
+            mensaje = "La estación vuelve a usar el flujo global."
+        else:
+            mensaje = "La estación ya usa el flujo global."
+        self.mensaje_r10.configure(text=mensaje)
+
+    def _agregar_pico_r10(self):
+        try:
+            extra = int(self.pico_extra_r10.get())
+            self.red.agregar_hora_pico(
+                self.pico_desde_r10.get(),
+                self.pico_hasta_r10.get(),
+                extra,
+            )
+        except ValueError as error:
+            self.mensaje_r10.configure(text=str(error))
+            return
+        texto = (
+            self.pico_desde_r10.get() + "–" + self.pico_hasta_r10.get()
+            + ": +" + str(extra) + " pasajeros/minuto/estación"
+        )
+        self.lista_picos_r10.insert(tk.END, texto)
+        self.mensaje_r10.configure(text="Periodo pico agregado.")
+
+    def _limpiar_picos_r10(self):
+        self.red.limpiar_horas_pico()
+        self.lista_picos_r10.delete(0, tk.END)
+        self.mensaje_r10.configure(text="Se eliminaron todos los periodos pico.")
+
+    def _configurar_capacidad_r10(self):
+        try:
+            capacidad = int(self.capacidad_universal_r10.get())
+            self.red.configurar_capacidad_universal(capacidad)
+        except ValueError as error:
+            self.mensaje_r10.configure(text=str(error))
+            return
+        self.mensaje_r10.configure(
+            text="Capacidad universal aplicada a todos los buses."
+        )
+
+    def _ejecutar_simulacion_r10(self):
+        try:
+            self.red.configurar_capacidad_universal(
+                int(self.capacidad_universal_r10.get())
+            )
+            resultado = self.red.simular_dia()
+        except ValueError as error:
+            self.mensaje_r10.configure(text=str(error))
+            return
+
+        resumen = resultado[0]
+        self.resumen_r10.configure(
+            text=(
+                "Pasajeros generados: " + str(resumen[0])
+                + " | Abordajes (incluye transbordos): " + str(resumen[1])
+                + " | No abordaron al cierre: " + str(resumen[2])
+                + " | Espera promedio: " + format(resumen[3], ".1f") + " min"
+                + " | Espera máxima: " + str(resumen[4]) + " min"
+                + " | Cola máxima por estación: " + str(resumen[5])
+                + " | Pasajeros en la red al cierre: " + str(resumen[6])
+                + " | Llegaron a su destino: " + str(resumen[7])
+            )
+        )
+        for elemento in self.tabla_r10.get_children():
+            self.tabla_r10.delete(elemento)
+        for fila in resultado[1]:
+            self.tabla_r10.insert(
+                "",
+                tk.END,
+                values=(
+                    fila[0],
+                    fila[1],
+                    fila[2],
+                    fila[3],
+                    format(fila[4], ".1f"),
+                    fila[5],
+                    fila[6],
+                    fila[7],
+                ),
+            )
+        self.mensaje_r10.configure(text="Simulación de un día completada.")
 
 
 def main():

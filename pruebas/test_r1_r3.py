@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from motor import Red
+from motor import Red, simular_fila
 
 
 class RedR1R3Tests(unittest.TestCase):
@@ -41,9 +41,15 @@ class RedR1R3Tests(unittest.TestCase):
             escritor.writerow(["ruta", "estacion", "hora"])
             escritor.writerow(["B74-1", "CALLE 26", "10:00"])
             escritor.writerow(["B74-1", "CALLE 26", "10:20"])
+            escritor.writerow(["B74-1", "AVENIDA JIMENEZ", "10:10"])
+            escritor.writerow(["B74-1", "AVENIDA JIMENEZ", "10:30"])
+            escritor.writerow(["B74-1", "CALLE 80", "10:20"])
             escritor.writerow(["B74-1", "CALLE 80", "11:00"])
+            escritor.writerow(["B74-2", "CALLE 80", "10:00"])
+            escritor.writerow(["B74-2", "AVENIDA JIMENEZ", "10:05"])
             escritor.writerow(["B74-2", "CALLE 26", "10:10"])
             escritor.writerow(["D10-1", "CALLE 45", "09:30"])
+            escritor.writerow(["D10-1", "AVENIDA JIMENEZ", "09:40"])
             escritor.writerow(["D10-1", "CALLE 80", "10:30"])
         self.red = Red(self.directorio_temporal.name)
 
@@ -108,7 +114,7 @@ class RedR1R3Tests(unittest.TestCase):
     def test_ranking_devuelve_k_estaciones_abiertas(self):
         self.assertEqual(
             self.red.ranking(3),
-            ["CALLE 26", "CALLE 80", "CALLE 45"],
+            ["AVENIDA JIMENEZ", "CALLE 80", "CALLE 26"],
         )
 
     def test_r7_muestra_ambos_sentidos_y_agrega_solo_estacion_existente(self):
@@ -179,6 +185,121 @@ class RedR1R3Tests(unittest.TestCase):
         self.assertFalse(self.red.rehacer())
         self.assertEqual(self.red.estado("CALLE 26"), (True, True))
         self.assertEqual(self.red.estado("CALLE 80"), (True, False))
+
+    def test_simular_fila_respeta_fifo_capacidad_y_mide_espera(self):
+        resultado = simular_fila([2, 0, 0], frecuencia=10, capacidad=1)
+        self.assertEqual(resultado, [1, 1.0, 2, 2, 1])
+
+    def test_r10_demanda_se_genera_cerca_de_servicios_programados(self):
+        self.red.configurar_demanda_global(0)
+        self.red.configurar_demanda_estacion(
+            "CALLE 26", pasajeros_por_minuto=2
+        )
+        self.red.configurar_capacidad_universal(1)
+
+        resumen, estaciones = self.red.simular_dia(semilla=17)
+        self.assertEqual(resumen[0], 102)
+        self.assertLessEqual(resumen[1], 2)
+        self.assertGreater(resumen[4], 30)
+        self.assertEqual(resumen[6], resumen[0] - resumen[7])
+
+        fila_origen = None
+        for fila in estaciones:
+            if fila[0] == "CALLE 26":
+                fila_origen = fila
+        self.assertIsNotNone(fila_origen)
+        self.assertEqual(fila_origen[1], 102)
+        self.assertEqual(
+            resumen[7],
+            sum(fila[7] for fila in estaciones),
+        )
+
+    def test_r10_demanda_global_y_hora_pico_se_suman(self):
+        self.red.configurar_demanda_global(0)
+        self.red.agregar_hora_pico("00:00", "00:01", 1)
+        resumen, estaciones = self.red.simular_dia()
+        self.assertEqual(resumen[0], 0)
+
+        self.red.limpiar_horas_pico()
+        resumen_sin_pico, estaciones_sin_pico = self.red.simular_dia()
+        self.assertEqual(resumen_sin_pico[0], 0)
+
+        self.red.agregar_hora_pico("09:30", "09:32", 1)
+        self.red.configurar_capacidad_universal(1000000)
+        resumen_con_servicio, estaciones_con_servicio = (
+            self.red.simular_dia(semilla=42)
+        )
+        self.assertGreater(resumen_con_servicio[0], 0)
+        self.assertLessEqual(resumen_con_servicio[4], 30)
+        self.assertEqual(
+            resumen_con_servicio[0],
+            resumen_con_servicio[7],
+        )
+
+    def test_r10_flujo_global_genera_pasajeros_en_todas_las_estaciones(self):
+        self.red.configurar_demanda_global(5)
+        self.red.configurar_capacidad_universal(1000000)
+
+        resumen, estaciones = self.red.simular_dia(semilla=42)
+
+        self.assertGreater(resumen[0], 0)
+        self.assertLess(resumen[0], 4 * 5 * 1440)
+        self.assertEqual(
+            resumen[0],
+            sum(fila[1] for fila in estaciones),
+        )
+        self.assertEqual(resumen[0], resumen[7])
+        for fila in estaciones:
+            self.assertGreater(fila[1], 0)
+
+    def test_r10_flujo_global_reemplaza_todas_las_tasas_locales(self):
+        self.red.configurar_demanda_estacion(
+            "CALLE 26", pasajeros_por_minuto=1
+        )
+        self.red.configurar_demanda_estacion(
+            "CALLE 45", pasajeros_por_minuto=2
+        )
+
+        self.red.aplicar_flujo_global_a_estaciones(3)
+        self.red.configurar_capacidad_universal(1000000)
+        resumen, estaciones = self.red.simular_dia(semilla=42)
+
+        self.assertGreater(resumen[0], 0)
+        self.assertLess(resumen[0], 4 * 3 * 1440)
+        self.assertEqual(
+            resumen[0],
+            sum(fila[1] for fila in estaciones),
+        )
+        self.assertEqual(resumen[0], resumen[7])
+        for fila in estaciones:
+            self.assertGreaterEqual(fila[1], 0)
+
+    def test_r10_destinos_aleatorios_son_repetibles_y_miden_llegadas(self):
+        self.red.configurar_demanda_global(0)
+        self.red.configurar_demanda_estacion("CALLE 45", pasajeros_por_minuto=1)
+        self.red.configurar_capacidad_universal(1000000)
+
+        resumen, estaciones = self.red.simular_dia(semilla=42)
+        resumen_repetido, estaciones_repetidas = self.red.simular_dia(semilla=42)
+        _, estaciones_otro_sorteo = self.red.simular_dia(
+            semilla=43
+        )
+
+        self.assertGreater(resumen[0], 0)
+        self.assertLess(resumen[0], 1440)
+        self.assertEqual(resumen, resumen_repetido)
+        self.assertEqual(estaciones, estaciones_repetidas)
+        self.assertLessEqual(resumen[4], 30)
+        self.assertEqual(resumen[0], resumen[7])
+        self.assertNotEqual(
+            [fila[7] for fila in estaciones],
+            [fila[7] for fila in estaciones_otro_sorteo],
+        )
+        self.assertEqual(
+            resumen[7],
+            sum(fila[7] for fila in estaciones),
+        )
+        self.assertGreater(resumen[7], 0)
 
 
 if __name__ == "__main__":

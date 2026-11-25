@@ -1,4 +1,87 @@
 import csv
+import random
+
+
+def simular_fila(llegadas, frecuencia, capacidad):
+    """
+    Simula una fila FIFO durante el periodo indicado por `llegadas`.
+
+    Cada posicion de llegadas representa pasajeros que llegan en ese minuto.
+    Un bus aparece en el minuto 0 y luego cada `frecuencia` minutos; lleva
+    hasta `capacidad` personas. Devuelve:
+    [abordados, espera_promedio, espera_maxima, cola_maxima, no_abordados].
+
+    Los tiempos son minutos y la espera promedio se pondera por pasajero.
+    Los que siguen esperando al terminar cuentan como no_abordados, y su
+    espera hasta el fin del periodo se incluye en las métricas.
+
+    Complejidad: O(t + p), donde t es la duración en minutos y p los
+    pasajeros en cola. Los grupos con el mismo minuto se almacenan juntos
+    para evitar crear un objeto por pasajero.
+    """
+    if frecuencia <= 0 or capacidad <= 0:
+        raise ValueError("La frecuencia y la capacidad deben ser mayores que cero.")
+
+    cola = []
+    cabeza = 0
+    abordados = 0
+    espera_total = 0
+    espera_maxima = 0
+    cola_maxima = 0
+    pasajeros_en_cola = 0
+
+    minuto = 0
+    while minuto < len(llegadas):
+        cantidad = llegadas[minuto]
+        if cantidad < 0:
+            raise ValueError("Las llegadas no pueden ser negativas.")
+        if cantidad > 0:
+            cola.append([minuto, cantidad])
+            pasajeros_en_cola += cantidad
+        if pasajeros_en_cola > cola_maxima:
+            cola_maxima = pasajeros_en_cola
+
+        if minuto % frecuencia == 0:
+            cupo = capacidad
+            while cupo > 0 and cabeza < len(cola):
+                grupo = cola[cabeza]
+                suben = grupo[1]
+                if suben > cupo:
+                    suben = cupo
+                espera = minuto - grupo[0]
+                espera_total += espera * suben
+                if espera > espera_maxima:
+                    espera_maxima = espera
+                abordados += suben
+                pasajeros_en_cola -= suben
+                cupo -= suben
+                grupo[1] -= suben
+                if grupo[1] == 0:
+                    cabeza += 1
+        minuto += 1
+
+    no_abordados = 0
+    fin_periodo = len(llegadas) - 1
+    for grupo in cola[cabeza:]:
+        no_abordados += grupo[1]
+        espera = fin_periodo - grupo[0]
+        espera_total += espera * grupo[1]
+        if espera > espera_maxima:
+            espera_maxima = espera
+
+    total_esperas = abordados + no_abordados
+    if total_esperas > 0:
+        espera_promedio = espera_total / total_esperas
+    else:
+        espera_promedio = 0
+
+    return [
+        abordados,
+        espera_promedio,
+        espera_maxima,
+        cola_maxima,
+        no_abordados,
+    ]
 
 
 class Red:
@@ -59,6 +142,1309 @@ class Red:
         self._ranking = self._construir_ranking()
         self._historial_deshacer = []
         self._historial_rehacer = []
+        self._flujo_global = 0
+        self._flujos_estaciones = []
+        self._capacidad_universal = 80
+        self._horas_pico = []
+        self._resultado_r10 = []
+        self._eventos_horario, self._viajes_horario = (
+            self._construir_eventos_horario()
+        )
+
+    def configurar_demanda_global(self, pasajeros_por_minuto):
+        """Configura la tasa base que genera demanda en todas las estaciones."""
+        self._validar_cantidad(pasajeros_por_minuto, "El flujo")
+        self._flujo_global = pasajeros_por_minuto
+        self._resultado_r10 = []
+
+    def aplicar_flujo_global_a_estaciones(self, pasajeros_por_minuto):
+        """
+        Aplica la tasa global a todas las estaciones y limpia tasas locales.
+
+        Recorre S configuraciones de estación: O(S) tiempo y O(1) espacio
+        adicional. Los destinos se eligen aleatoriamente por lote al simular.
+        """
+        self.configurar_demanda_global(pasajeros_por_minuto)
+        for configuracion in self._flujos_estaciones:
+            configuracion[1] = -1
+
+    def configurar_demanda_estacion(self, estacion, pasajeros_por_minuto=None):
+        """
+        Configura el flujo local de una estación, sin fijar destinos.
+
+        Si no se entrega tasa local, la estación usa el flujo global.
+        """
+        if pasajeros_por_minuto is not None:
+            self._validar_cantidad(pasajeros_por_minuto, "El flujo")
+        origen_normalizado = self._validar_estacion_configurable(estacion)
+        flujo_local = -1 if pasajeros_por_minuto is None else pasajeros_por_minuto
+        posicion = 0
+        while posicion < len(self._flujos_estaciones):
+            if self._flujos_estaciones[posicion][0] == origen_normalizado:
+                self._flujos_estaciones[posicion] = [
+                    origen_normalizado,
+                    flujo_local,
+                ]
+                self._resultado_r10 = []
+                return
+            posicion += 1
+        self._flujos_estaciones.append([origen_normalizado, flujo_local])
+        self._resultado_r10 = []
+
+    def quitar_demanda_estacion(self, estacion):
+        """Quita la tasa local para volver a usar el flujo global."""
+        origen_normalizado = self._normalizar(estacion)
+        posicion = 0
+        while posicion < len(self._flujos_estaciones):
+            if self._flujos_estaciones[posicion][0] == origen_normalizado:
+                self._flujos_estaciones.pop(posicion)
+                self._resultado_r10 = []
+                return True
+            posicion += 1
+        return False
+
+    def configurar_capacidad_universal(self, capacidad):
+        """Asigna una única capacidad para todos los buses en O(1)."""
+        self._validar_cantidad(capacidad, "La capacidad")
+        if capacidad == 0:
+            raise ValueError("La capacidad debe ser mayor que cero.")
+        self._capacidad_universal = capacidad
+        self._resultado_r10 = []
+
+    def agregar_hora_pico(self, desde, hasta, pasajeros_extra):
+        """
+        Añade demanda por minuto a todas las estaciones abiertas en un intervalo.
+
+        Acepta HH:MM; si `hasta` es menor que `desde`, el intervalo cruza
+        medianoche. En el caso habitual [14:00, 17:00), incluye las 14:00 y no
+        incluye las 17:00.
+        """
+        self._validar_cantidad(pasajeros_extra, "El incremento")
+        minuto_desde = self._convertir_hora(desde)
+        minuto_hasta = self._convertir_hora(hasta)
+        if minuto_desde is None or minuto_hasta is None:
+            raise ValueError("Las horas deben tener el formato HH:MM.")
+        self._horas_pico.append([minuto_desde, minuto_hasta, pasajeros_extra])
+        self._resultado_r10 = []
+
+    def limpiar_horas_pico(self):
+        """Quita todos los incrementos de demanda personalizados."""
+        self._horas_pico = []
+        self._resultado_r10 = []
+
+    def _construir_eventos_horario(self):
+        """
+        Agrupa las llegadas programadas por servicio, parada y viaje indexado.
+
+        Los CSV no tienen identificador de vehículo; por ello, el evento numero
+        i de cada parada de un servicio se asocia al viaje i. Es una
+        aproximación de los datos disponibles, y se documenta en README.
+        """
+        eventos = []
+        viajes = []
+        indice_horario = 0
+
+        for indice_servicio in range(len(self._rutas_info)):
+            servicio = self._rutas_info[indice_servicio]
+            identificador = servicio[0]
+            paradas = servicio[1]
+            horarios_por_parada = []
+            for parada in paradas:
+                horarios_por_parada.append([])
+
+            while (
+                indice_horario < len(self._horarios)
+                and self._horarios[indice_horario][0] < identificador
+            ):
+                indice_horario += 1
+
+            while (
+                indice_horario < len(self._horarios)
+                and self._horarios[indice_horario][0] == identificador
+            ):
+                fila = self._horarios[indice_horario]
+                indice_parada = self._buscar_en_lista(paradas, fila[1])
+                if indice_parada != -1:
+                    horarios_por_parada[indice_parada].append(fila[2])
+                indice_horario += 1
+
+            cantidad_viajes = 0
+            for horarios_parada in horarios_por_parada:
+                if len(horarios_parada) > cantidad_viajes:
+                    cantidad_viajes = len(horarios_parada)
+
+            for indice_viaje in range(cantidad_viajes):
+                viaje_id = len(viajes)
+                viajes.append(
+                    [indice_servicio, self._capacidad_universal, [], 0]
+                )
+                minuto_anterior = -1
+                for indice_parada in range(len(paradas)):
+                    horas = horarios_por_parada[indice_parada]
+                    if indice_viaje < len(horas):
+                        minuto = horas[indice_viaje]
+                        while minuto < minuto_anterior:
+                            minuto += 1440
+                        minuto_anterior = minuto
+                        if minuto < 1440:
+                            indice_estacion = self._posicion_estacion(
+                                paradas[indice_parada]
+                            )
+                            if indice_estacion != -1:
+                                eventos.append(
+                                    [
+                                        minuto,
+                                        viaje_id,
+                                        indice_estacion,
+                                        indice_parada,
+                                    ]
+                                )
+
+        return self._ordenar_eventos_horario(eventos), viajes
+
+    @classmethod
+    def _ordenar_eventos_horario(cls, eventos):
+        """Ordena llegadas por minuto con merge sort: O(H log H), espacio O(H)."""
+        if len(eventos) < 2:
+            return eventos
+
+        mitad = len(eventos) // 2
+        izquierda = cls._ordenar_eventos_horario(eventos[:mitad])
+        derecha = cls._ordenar_eventos_horario(eventos[mitad:])
+        resultado = []
+        i = 0
+        j = 0
+        while i < len(izquierda) and j < len(derecha):
+            clave_izquierda = (
+                izquierda[i][0],
+                izquierda[i][1],
+                izquierda[i][3],
+            )
+            clave_derecha = (
+                derecha[j][0],
+                derecha[j][1],
+                derecha[j][3],
+            )
+            if clave_izquierda <= clave_derecha:
+                resultado.append(izquierda[i])
+                i += 1
+            else:
+                resultado.append(derecha[j])
+                j += 1
+        while i < len(izquierda):
+            resultado.append(izquierda[i])
+            i += 1
+        while j < len(derecha):
+            resultado.append(derecha[j])
+            j += 1
+        return resultado
+
+    def _simular_dia_por_frecuencia(self, frecuencia):
+        """
+        Simula un día de 1440 minutos en toda la red.
+
+        Demanda: una tasa global y un destino, con excepciones por estación;
+        los incrementos horarios se suman a la tasa aplicable. Servicio:
+        recorridos direccionales de rutas.csv, un bus por servicio cada
+        `frecuencia` minutos, capacidad global o sobrescrita por bus.
+        Al transferir, cada pasajero vuelve a la cola FIFO de la estación.
+
+        Retorna [resumen, estaciones]. El resumen es
+        [generados, abordajes, no_abordados, espera_promedio, espera_maxima,
+        cola_maxima, pasajeros_en_red_al_final]. Cada fila por estación es
+        [nombre, generados, esperando_al_final, cola_maxima, espera_promedio,
+        espera_maxima, no_abordados].
+
+        Complejidad: O(M*R^2*P^2 + D*(N + A + E + Q)), donde M es la cantidad
+        de estaciones con flujo, R servicios direccionales, P paradas máximas,
+        D=1440 minutos, N estaciones, A buses activos por minuto, E eventos de
+        parada y Q grupos FIFO revisados. Se guardan grupos equivalentes, no
+        objetos individuales; espacio O(N + E + G), G grupos diarios.
+        """
+        self._validar_cantidad(frecuencia, "La frecuencia")
+        if frecuencia == 0:
+            raise ValueError("La frecuencia debe ser mayor que cero.")
+
+        colas = []
+        metricas = []
+        demandas = []
+        for estacion in self._estaciones:
+            colas.append([])
+            metricas.append([0, 0, 0, 0, 0, 0])
+
+        indice_estacion = 0
+        while indice_estacion < len(self._estaciones):
+            estacion = self._estaciones[indice_estacion]
+            config = self._buscar_flujo_estacion(estacion)
+            if config == -1:
+                flujo = self._flujo_global
+                destino = ""
+            else:
+                flujo = self._flujos_estaciones[config][1]
+                destino = ""
+            plan = []
+            if destino != "":
+                if flujo > 0 or len(self._horas_pico) > 0:
+                    plan = self._plan_servicios(estacion, destino)
+            demandas.append([flujo, destino, plan])
+            indice_estacion += 1
+
+        buses_activos = []
+        total_generados = 0
+        total_abordajes = 0
+        total_completados = 0
+        espera_total = 0
+        espera_maxima = 0
+        cola_maxima_red = 0
+
+        minuto = 0
+        while minuto < 1440:
+            indice_estacion = 0
+            while indice_estacion < len(self._estaciones):
+                estacion = self._estaciones[indice_estacion]
+                if self._abiertas[indice_estacion]:
+                    demanda = demandas[indice_estacion]
+                    flujo = demanda[0]
+                    destino = demanda[1]
+                    flujo_minuto = flujo + self._incremento_hora(minuto)
+                    if destino != estacion and flujo_minuto > 0:
+                        total_generados += flujo_minuto
+                        metricas[indice_estacion][0] += flujo_minuto
+                        plan = demanda[2]
+                        if len(plan) > 0:
+                            primer_tramo = plan[0]
+                            servicio_siguiente = ""
+                            if len(plan) > 1:
+                                servicio_siguiente = plan[1][0]
+                            cola = colas[indice_estacion]
+                            cola.append(
+                                [
+                                    minuto,
+                                    destino,
+                                    primer_tramo[0],
+                                    primer_tramo[1],
+                                    servicio_siguiente,
+                                    flujo_minuto,
+                                ]
+                            )
+                            total_esperando = self._contar_cola(cola)
+                            if total_esperando > metricas[indice_estacion][1]:
+                                metricas[indice_estacion][1] = total_esperando
+                            if total_esperando > cola_maxima_red:
+                                cola_maxima_red = total_esperando
+                        else:
+                            cola = colas[indice_estacion]
+                            cola.append(
+                                [
+                                    minuto,
+                                    destino,
+                                    "",
+                                    destino,
+                                    "",
+                                    flujo_minuto,
+                                ]
+                            )
+                            total_esperando = self._contar_cola(cola)
+                            if total_esperando > metricas[indice_estacion][1]:
+                                metricas[indice_estacion][1] = total_esperando
+                            if total_esperando > cola_maxima_red:
+                                cola_maxima_red = total_esperando
+                indice_estacion += 1
+
+            if minuto % frecuencia == 0:
+                indice_ruta = 0
+                while indice_ruta < len(self._rutas_info):
+                    capacidad = self._capacidad_universal
+                    if len(self._rutas_info[indice_ruta][1]) > 0:
+                        buses_activos.append(
+                            [
+                                indice_ruta,
+                                0,
+                                minuto,
+                                [],
+                                0,
+                                capacidad,
+                            ]
+                        )
+                    indice_ruta += 1
+
+            buses_pendientes = []
+            for bus_activo in buses_activos:
+                indice_ruta = bus_activo[0]
+                identificador = self._rutas_info[indice_ruta][0]
+                indice_parada = bus_activo[1]
+                llegada = bus_activo[2]
+                pasajeros_bus = bus_activo[3]
+                ocupacion = bus_activo[4]
+                capacidad = bus_activo[5]
+
+                if llegada != minuto:
+                    buses_pendientes.append(bus_activo)
+                    continue
+
+                paradas = self._rutas_info[indice_ruta][1]
+                estacion_bus = paradas[indice_parada]
+                indice_actual = self._posicion_estacion(estacion_bus)
+                pasajeros_restantes = []
+                for pasajero in pasajeros_bus:
+                    if pasajero[2] == estacion_bus:
+                        ocupacion -= pasajero[4]
+                        if pasajero[3] != "":
+                            indice_transbordo = self._posicion_estacion(estacion_bus)
+                            if indice_transbordo != -1:
+                                colas[indice_transbordo].append(
+                                    [
+                                        minuto,
+                                        pasajero[1],
+                                        pasajero[3],
+                                        pasajero[1],
+                                        "",
+                                        pasajero[4],
+                                    ]
+                                )
+                                cola_actual = self._contar_cola(
+                                    colas[indice_transbordo]
+                                )
+                                if cola_actual > metricas[indice_transbordo][1]:
+                                    metricas[indice_transbordo][1] = cola_actual
+                                if cola_actual > cola_maxima_red:
+                                    cola_maxima_red = cola_actual
+                        else:
+                            total_completados += pasajero[4]
+                    else:
+                        pasajeros_restantes.append(pasajero)
+                pasajeros_bus = pasajeros_restantes
+
+                if indice_actual != -1 and self._abiertas[indice_actual]:
+                    cola = colas[indice_actual]
+                    nueva_cola = []
+                    for pasajero in cola:
+                        if (
+                            pasajero[2] == identificador
+                            and pasajero[3] != estacion_bus
+                            and ocupacion < capacidad
+                        ):
+                            cupo = capacidad - ocupacion
+                            abordados = pasajero[5]
+                            if abordados > cupo:
+                                abordados = cupo
+                            espera = minuto - pasajero[0]
+                            espera_total += espera * abordados
+                            total_abordajes += abordados
+                            metricas[indice_actual][2] += espera * abordados
+                            metricas[indice_actual][3] += abordados
+                            if espera > espera_maxima:
+                                espera_maxima = espera
+                            if espera > metricas[indice_actual][4]:
+                                metricas[indice_actual][4] = espera
+                            ocupacion += abordados
+                            pasajeros_bus.append(
+                                [
+                                    minuto,
+                                    pasajero[1],
+                                    pasajero[3],
+                                    pasajero[4],
+                                    abordados,
+                                ]
+                            )
+                            pasajero[5] -= abordados
+                        if pasajero[5] > 0:
+                            nueva_cola.append(pasajero)
+                    colas[indice_actual] = nueva_cola
+
+                bus_activo[3] = pasajeros_bus
+                bus_activo[4] = ocupacion
+                bus_activo[1] += 1
+                if bus_activo[1] < len(paradas):
+                    bus_activo[2] = minuto + 3
+                    buses_pendientes.append(bus_activo)
+
+            buses_activos = buses_pendientes
+            minuto += 1
+
+        total_no_abordados = 0
+        maximo_espera_red_final = espera_maxima
+        suma_esperas_metricas = espera_total
+        cantidad_esperas_metricas = total_abordajes
+        indice_estacion = 0
+        while indice_estacion < len(colas):
+            cola = colas[indice_estacion]
+            metricas_estacion = metricas[indice_estacion]
+            esperando = 0
+            for pasajero in cola:
+                cantidad = pasajero[5]
+                esperando += cantidad
+                total_no_abordados += cantidad
+                espera = 1439 - pasajero[0]
+                suma_esperas_metricas += espera * cantidad
+                cantidad_esperas_metricas += cantidad
+                if espera > maximo_espera_red_final:
+                    maximo_espera_red_final = espera
+                if espera > metricas_estacion[4]:
+                    metricas_estacion[4] = espera
+                metricas_estacion[2] += espera * cantidad
+                metricas_estacion[3] += cantidad
+
+            metricas_estacion[5] = esperando
+            indice_estacion += 1
+
+        pasajeros_a_bordo = 0
+        for bus_activo in buses_activos:
+            for pasajero in bus_activo[3]:
+                pasajeros_a_bordo += pasajero[4]
+
+        if cantidad_esperas_metricas > 0:
+            promedio_red = (
+                suma_esperas_metricas / cantidad_esperas_metricas
+            )
+        else:
+            promedio_red = 0
+        pasajeros_en_red = total_generados - total_completados
+        if pasajeros_en_red < total_no_abordados + pasajeros_a_bordo:
+            pasajeros_en_red = total_no_abordados + pasajeros_a_bordo
+
+        resumen = [
+            total_generados,
+            total_abordajes,
+            total_no_abordados,
+            promedio_red,
+            maximo_espera_red_final,
+            cola_maxima_red,
+            pasajeros_en_red,
+        ]
+        filas_estaciones = []
+        indice_estacion = 0
+        while indice_estacion < len(self._estaciones):
+            metricas_estacion = metricas[indice_estacion]
+            if metricas_estacion[3] > 0:
+                promedio = metricas_estacion[2] / metricas_estacion[3]
+            else:
+                promedio = 0
+            filas_estaciones.append(
+                [
+                    self._estaciones[indice_estacion],
+                    metricas_estacion[0],
+                    metricas_estacion[5],
+                    metricas_estacion[1],
+                    promedio,
+                    metricas_estacion[4],
+                    metricas_estacion[5],
+                ]
+            )
+            indice_estacion += 1
+
+        self._resultado_r10 = [resumen, filas_estaciones]
+        return self._resultado_r10
+
+    def _guardar_itinerario(
+        self, destinos, indice_destino, servicio, parada, siguiente, pasos
+    ):
+        """Conserva para cada destino el recorrido conocido con menos paradas."""
+        if not self._abiertas[indice_destino]:
+            return
+        actual = destinos[indice_destino]
+        if pasos < actual[4]:
+            destinos[indice_destino] = [
+                servicio,
+                parada,
+                siguiente,
+                indice_destino,
+                pasos,
+            ]
+
+    def _agregar_itinerarios_desde(
+        self, indice_origen, servicios_por_estacion, destinos
+    ):
+        """
+        Precalcula destinos alcanzables directos o con un transbordo.
+
+        Indexar los recorridos por estación evita volver a escanear todas las
+        rutas al asignar cada lote aleatorio. El coste es proporcional a las
+        combinaciones de tramos válidas examinadas para este origen.
+        """
+        for servicio_a, inicio_a in servicios_por_estacion[indice_origen]:
+            paradas_a = self._rutas_info[servicio_a][1]
+            for parada_a in range(inicio_a + 1, len(paradas_a)):
+                nombre_parada = paradas_a[parada_a]
+                indice_parada = self._posicion_estacion(nombre_parada)
+                if indice_parada == -1 or not self._abiertas[indice_parada]:
+                    continue
+
+                self._guardar_itinerario(
+                    destinos,
+                    indice_parada,
+                    servicio_a,
+                    indice_parada,
+                    -1,
+                    parada_a - inicio_a,
+                )
+
+                for servicio_b, inicio_b in servicios_por_estacion[indice_parada]:
+                    if servicio_b == servicio_a:
+                        continue
+                    paradas_b = self._rutas_info[servicio_b][1]
+                    for parada_b in range(inicio_b + 1, len(paradas_b)):
+                        indice_destino = self._posicion_estacion(
+                            paradas_b[parada_b]
+                        )
+                        if indice_destino == -1 or indice_destino == indice_origen:
+                            continue
+                        pasos = (
+                            parada_a - inicio_a + parada_b - inicio_b
+                        )
+                        self._guardar_itinerario(
+                            destinos,
+                            indice_destino,
+                            servicio_a,
+                            indice_parada,
+                            servicio_b,
+                            pasos,
+                        )
+
+    @staticmethod
+    def _primera_salida_desde(salidas, minuto):
+        """Busca la primera salida en o después del minuto con búsqueda binaria."""
+        izquierda = 0
+        derecha = len(salidas)
+        while izquierda < derecha:
+            medio = (izquierda + derecha) // 2
+            if salidas[medio][0] < minuto:
+                izquierda = medio + 1
+            else:
+                derecha = medio
+        return izquierda
+
+    def _itinerarios_con_salida_futura(
+        self,
+        indice_origen,
+        minuto,
+        opciones,
+        salidas,
+        posiciones_por_minuto,
+        eventos_viaje,
+        mascara_posterior,
+    ):
+        """
+        Filtra rutas conocidas por salidas reales dentro de la ventana.
+
+        Los itinerarios topológicos se agrupan por servicio y transbordo una
+        vez por origen. Aquí se comprueban las salidas programadas del grupo y
+        sus máscaras de paradas posteriores, sin reconstruir combinaciones de
+        rutas para cada destino en cada minuto.
+        """
+        ventana_maxima_espera = 30
+        destinos = []
+        limite_salida = minuto + ventana_maxima_espera
+        for grupo_itinerario in opciones:
+            servicio = grupo_itinerario[0]
+            indice_transbordo = grupo_itinerario[1]
+            servicio_siguiente = grupo_itinerario[2]
+            salidas_servicio = salidas[indice_origen][servicio]
+            indices_minuto = posiciones_por_minuto[indice_origen][servicio]
+            if indices_minuto is None:
+                posicion = len(salidas_servicio)
+            else:
+                posicion = indices_minuto[minuto]
+            destinos_posibles = 0
+            destinos_requeridos = grupo_itinerario[4]
+
+            while (
+                posicion < len(salidas_servicio)
+                and salidas_servicio[posicion][0] <= limite_salida
+            ):
+                salida = salidas_servicio[posicion]
+                indice_evento = salida[3]
+                if servicio_siguiente == -1:
+                    destinos_posibles |= mascara_posterior[indice_evento]
+                else:
+                    evento_conexion = eventos_viaje[salida[1]][
+                        indice_transbordo
+                    ]
+                    if (
+                        evento_conexion is not None
+                        and evento_conexion[1] > salida[2]
+                    ):
+                        minuto_siguiente = evento_conexion[0] + 1
+                        salidas_siguientes = salidas[indice_transbordo][
+                            servicio_siguiente
+                        ]
+                        indices_siguiente = posiciones_por_minuto[
+                            indice_transbordo
+                        ][servicio_siguiente]
+                        if indices_siguiente is None:
+                            posicion_siguiente = len(salidas_siguientes)
+                        elif minuto_siguiente <= 1440:
+                            posicion_siguiente = indices_siguiente[
+                                minuto_siguiente
+                            ]
+                        else:
+                            posicion_siguiente = len(salidas_siguientes)
+                        limite_transbordo = (
+                            evento_conexion[0] + ventana_maxima_espera
+                        )
+                        while (
+                            posicion_siguiente < len(salidas_siguientes)
+                            and salidas_siguientes[posicion_siguiente][0]
+                            <= limite_transbordo
+                        ):
+                            evento_siguiente = salidas_siguientes[
+                                posicion_siguiente
+                            ]
+                            destinos_posibles |= mascara_posterior[
+                                evento_siguiente[3]
+                            ]
+                            if (
+                                destinos_posibles & destinos_requeridos
+                                == destinos_requeridos
+                            ):
+                                break
+                            posicion_siguiente += 1
+                posicion += 1
+                if (
+                    destinos_posibles & destinos_requeridos
+                    == destinos_requeridos
+                ):
+                    break
+
+            for indice_destino, itinerario in grupo_itinerario[3]:
+                if destinos_posibles & (1 << indice_destino):
+                    destinos.append([indice_destino, itinerario])
+        return destinos
+
+    def simular_dia(self, semilla=None):
+        """
+        Simula 24 horas con las llegadas reales registradas en horarios.csv.
+
+        Cada viaje se crea a partir de las secuencias de horarios por parada.
+        Las colas se guardan como matriz estación x servicio; cada celda es una
+        lista FIFO de lotes y un índice de cabeza evita retirar por índice 0.
+        El evento de horario identifica minuto, viaje, estación y orden de parada.
+
+        Cada lote elige uniformemente un destino distinto del origen entre los
+        que tienen un itinerario con salidas utilizables en la ventana de 30
+        minutos. Se valida el viaje real al abordar y también la salida de
+        transbordo. La tasa global aplica a todas las estaciones y la demanda
+        pico se suma.
+
+        Retorna [resumen, estaciones]. El resumen termina con pasajeros_en_red
+        y llegadas a destino; cada fila de estación termina con su total de
+        llegadas a destino, sin contar transbordos.
+
+        La semilla opcional permite repetir una simulación para pruebas.
+        Los índices de salidas por minuto cuestan O(1440*S + H), donde S es
+        el número de pares estación-servicio con horarios y H los eventos.
+        La simulación cuesta O(1440*N + W + B + Q): W cuenta las salidas
+        examinadas por itinerario, B los destinos validados con máscaras y Q
+        los grupos de pasajeros procesados. Espacio O(H + V*N + N*R +
+        1440*S + D + G), con V viajes, D opciones de destino y G grupos.
+        """
+        numero_estaciones = len(self._estaciones)
+        numero_servicios = len(self._rutas_info)
+        colas = []
+        indices_cola = []
+        metricas = []
+        esperando_estacion = []
+        cola_sin_ruta = []
+        flujos = []
+
+        indice_estacion = 0
+        while indice_estacion < numero_estaciones:
+            colas_estacion = []
+            indices_estacion = []
+            indice_servicio = 0
+            while indice_servicio < numero_servicios:
+                colas_estacion.append([])
+                indices_estacion.append(0)
+                indice_servicio += 1
+            colas.append(colas_estacion)
+            indices_cola.append(indices_estacion)
+            metricas.append([0, 0, 0, 0, 0, 0, 0])
+            esperando_estacion.append(0)
+            cola_sin_ruta.append([])
+            flujos.append(self._flujo_global)
+            indice_estacion += 1
+
+        for configuracion in self._flujos_estaciones:
+            indice_origen = self._posicion_estacion(configuracion[0])
+            if indice_origen == -1:
+                continue
+            flujo = configuracion[1]
+            if flujo < 0:
+                flujo = self._flujo_global
+            flujos[indice_origen] = flujo
+
+        servicios_por_estacion = []
+        indice_estacion = 0
+        while indice_estacion < numero_estaciones:
+            servicios_por_estacion.append([])
+            indice_estacion += 1
+        for indice_servicio in range(numero_servicios):
+            paradas = self._rutas_info[indice_servicio][1]
+            for indice_parada in range(len(paradas)):
+                indice = self._posicion_estacion(paradas[indice_parada])
+                if indice != -1:
+                    servicios = servicios_por_estacion[indice]
+                    servicio_encontrado = False
+                    for servicio_existente, _ in servicios:
+                        if servicio_existente == indice_servicio:
+                            servicio_encontrado = True
+                            break
+                    if not servicio_encontrado:
+                        servicios.append([indice_servicio, indice_parada])
+
+        salidas = []
+        for indice_estacion in range(numero_estaciones):
+            salidas_estacion = []
+            for indice_servicio in range(numero_servicios):
+                salidas_estacion.append([])
+            salidas.append(salidas_estacion)
+        eventos_por_viaje = []
+        eventos_ordenados_por_viaje = []
+        for viaje in self._viajes_horario:
+            eventos_por_viaje.append([None] * numero_estaciones)
+            eventos_ordenados_por_viaje.append([])
+        mascara_posterior = [0] * len(self._eventos_horario)
+        for indice_evento_horario in range(len(self._eventos_horario)):
+            evento = self._eventos_horario[indice_evento_horario]
+            indice_viaje = evento[1]
+            indice_estacion = evento[2]
+            indice_servicio = self._viajes_horario[indice_viaje][0]
+            referencia_evento = [evento[0], evento[3], indice_evento_horario]
+            eventos_por_viaje[indice_viaje][indice_estacion] = (
+                referencia_evento
+            )
+            eventos_ordenados_por_viaje[indice_viaje].append(
+                [
+                    evento[0],
+                    indice_estacion,
+                    evento[3],
+                    indice_evento_horario,
+                ]
+            )
+            salidas[indice_estacion][indice_servicio].append(
+                [
+                    evento[0],
+                    indice_viaje,
+                    evento[3],
+                    indice_evento_horario,
+                ]
+            )
+
+        posiciones_por_minuto = []
+        for indice_estacion in range(numero_estaciones):
+            posiciones_estacion = []
+            for indice_servicio in range(numero_servicios):
+                salidas_servicio = salidas[indice_estacion][indice_servicio]
+                if len(salidas_servicio) == 0:
+                    posiciones_estacion.append(None)
+                    continue
+                posiciones_minuto = []
+                posicion = 0
+                for minuto_consulta in range(1441):
+                    while (
+                        posicion < len(salidas_servicio)
+                        and salidas_servicio[posicion][0] < minuto_consulta
+                    ):
+                        posicion += 1
+                    posiciones_minuto.append(posicion)
+                posiciones_estacion.append(posiciones_minuto)
+            posiciones_por_minuto.append(posiciones_estacion)
+
+        for eventos_viaje in eventos_ordenados_por_viaje:
+            estaciones_posteriores = 0
+            indice_evento_viaje = len(eventos_viaje) - 1
+            while indice_evento_viaje >= 0:
+                evento_viaje = eventos_viaje[indice_evento_viaje]
+                mascara_posterior[evento_viaje[3]] = estaciones_posteriores
+                estaciones_posteriores |= 1 << evento_viaje[1]
+                indice_evento_viaje -= 1
+
+        opciones_por_estacion = []
+        for indice_origen in range(numero_estaciones):
+            opciones = []
+            if flujos[indice_origen] > 0 or len(self._horas_pico) > 0:
+                itinerarios_estacion = []
+                for indice_destino in range(numero_estaciones):
+                    itinerarios_estacion.append(
+                        [-1, -1, -1, -1, numero_estaciones + 1]
+                    )
+                self._agregar_itinerarios_desde(
+                    indice_origen,
+                    servicios_por_estacion,
+                    itinerarios_estacion,
+                )
+                for indice_destino in range(numero_estaciones):
+                    if itinerarios_estacion[indice_destino][0] != -1:
+                        itinerario = itinerarios_estacion[indice_destino]
+                        if itinerario[2] == -1:
+                            indice_transbordo = -1
+                        else:
+                            indice_transbordo = itinerario[1]
+                        grupo_encontrado = False
+                        for grupo_itinerario in opciones:
+                            if (
+                                grupo_itinerario[0] == itinerario[0]
+                                and grupo_itinerario[1] == indice_transbordo
+                                and grupo_itinerario[2] == itinerario[2]
+                            ):
+                                grupo_encontrado = True
+                                break
+                        if not grupo_encontrado:
+                            grupo_itinerario = [
+                                itinerario[0],
+                                indice_transbordo,
+                                itinerario[2],
+                                [],
+                                0,
+                            ]
+                            opciones.append(grupo_itinerario)
+                        grupo_itinerario[3].append(
+                            [indice_destino, itinerario]
+                        )
+                        grupo_itinerario[4] |= 1 << indice_destino
+            opciones_por_estacion.append(opciones)
+
+        generador = random.Random(semilla)
+        marcas_evento_transbordo = [-1] * (
+            numero_estaciones * numero_servicios
+        )
+        destinos_evento_transbordo = [0] * (
+            numero_estaciones * numero_servicios
+        )
+
+        viajes = []
+        for viaje in self._viajes_horario:
+            viajes.append(
+                [viaje[0], self._capacidad_universal, [], 0]
+            )
+
+        total_generados = 0
+        total_abordajes = 0
+        total_completados = 0
+        total_destinos_alcanzados = 0
+        espera_total = 0
+        cantidad_esperas = 0
+        espera_maxima = 0
+        cola_maxima_red = 0
+        indice_evento = 0
+        minuto = 0
+
+        while minuto < 1440:
+            indice_estacion = 0
+            while indice_estacion < numero_estaciones:
+                flujo = flujos[indice_estacion]
+                if flujo >= 0 and self._abiertas[indice_estacion]:
+                    llegadas = flujo + self._incremento_hora(minuto)
+                    if llegadas > 0:
+                        if numero_estaciones < 2:
+                            raise ValueError(
+                                "Se necesitan al menos dos estaciones para asignar destinos."
+                            )
+                        itinerarios_disponibles = (
+                            self._itinerarios_con_salida_futura(
+                                indice_estacion,
+                                minuto,
+                                opciones_por_estacion[indice_estacion],
+                                salidas,
+                                posiciones_por_minuto,
+                                eventos_por_viaje,
+                                mascara_posterior,
+                            )
+                        )
+                        if len(itinerarios_disponibles) == 0:
+                            indice_estacion += 1
+                            continue
+                        itinerario_disponible = itinerarios_disponibles[
+                            generador.randrange(len(itinerarios_disponibles))
+                        ]
+                        indice_destino = itinerario_disponible[0]
+                        itinerario = itinerario_disponible[1]
+                        total_generados += llegadas
+                        metricas[indice_estacion][0] += llegadas
+                        servicio = itinerario[0]
+                        if servicio == -1:
+                            cola_sin_ruta[indice_estacion].append(
+                                [minuto, indice_destino, llegadas]
+                            )
+                        else:
+                            colas[indice_estacion][servicio].append(
+                                [
+                                    minuto,
+                                    indice_destino,
+                                    itinerario[1],
+                                    itinerario[2],
+                                    llegadas,
+                                ]
+                            )
+                        esperando_estacion[indice_estacion] += llegadas
+                        cantidad_espera = esperando_estacion[indice_estacion]
+                        if cantidad_espera > metricas[indice_estacion][1]:
+                            metricas[indice_estacion][1] = cantidad_espera
+                        if cantidad_espera > cola_maxima_red:
+                            cola_maxima_red = cantidad_espera
+                indice_estacion += 1
+
+            while (
+                indice_evento < len(self._eventos_horario)
+                and self._eventos_horario[indice_evento][0] == minuto
+            ):
+                evento = self._eventos_horario[indice_evento]
+                indice_viaje = evento[1]
+                indice_estacion = evento[2]
+                viaje = viajes[indice_viaje]
+                indice_servicio = viaje[0]
+                if self._abiertas[indice_estacion]:
+                    manifiesto = viaje[2]
+                    restantes = []
+                    for pasajero in manifiesto:
+                        if pasajero[1] == indice_estacion:
+                            viaje[3] -= pasajero[3]
+                            siguiente_servicio = pasajero[2]
+                            if siguiente_servicio == -1:
+                                total_completados += pasajero[3]
+                                total_destinos_alcanzados += pasajero[3]
+                                metricas[indice_estacion][6] += pasajero[3]
+                            else:
+                                destino = pasajero[0]
+                                colas[indice_estacion][siguiente_servicio].append(
+                                    [
+                                        minuto,
+                                        destino,
+                                        destino,
+                                        -1,
+                                        pasajero[3],
+                                    ]
+                                )
+                                esperando_estacion[indice_estacion] += pasajero[3]
+                                cantidad_espera = esperando_estacion[indice_estacion]
+                                if cantidad_espera > metricas[indice_estacion][1]:
+                                    metricas[indice_estacion][1] = cantidad_espera
+                                if cantidad_espera > cola_maxima_red:
+                                    cola_maxima_red = cantidad_espera
+                        else:
+                            restantes.append(pasajero)
+                    viaje[2] = restantes
+
+                    cola = colas[indice_estacion][indice_servicio]
+                    cabeza = indices_cola[indice_estacion][indice_servicio]
+                    grupos_restantes = []
+                    while cabeza < len(cola):
+                        grupo = cola[cabeza]
+                        puede_abordar = False
+                        if viaje[3] < viaje[1]:
+                            if grupo[3] == -1:
+                                puede_abordar = (
+                                    mascara_posterior[indice_evento]
+                                    & (1 << grupo[1])
+                                ) != 0
+                            else:
+                                indice_transbordo = grupo[2]
+                                servicio_siguiente = grupo[3]
+                                indice_cache = (
+                                    indice_transbordo
+                                    * numero_servicios
+                                    + servicio_siguiente
+                                )
+                                marca_evento = indice_evento + 1
+                                if (
+                                    marcas_evento_transbordo[indice_cache]
+                                    != marca_evento
+                                ):
+                                    destinos_posibles = 0
+                                    evento_conexion = eventos_por_viaje[
+                                        indice_viaje
+                                    ][indice_transbordo]
+                                    if (
+                                        evento_conexion is not None
+                                        and evento_conexion[1] > evento[3]
+                                    ):
+                                        minuto_siguiente = (
+                                            evento_conexion[0] + 1
+                                        )
+                                        salidas_siguientes = salidas[
+                                            indice_transbordo
+                                        ][servicio_siguiente]
+                                        posicion_siguiente = (
+                                            self._primera_salida_desde(
+                                                salidas_siguientes,
+                                                minuto_siguiente,
+                                            )
+                                        )
+                                        limite_transbordo = (
+                                            evento_conexion[0] + 30
+                                        )
+                                        while (
+                                            posicion_siguiente
+                                            < len(salidas_siguientes)
+                                            and salidas_siguientes[
+                                                posicion_siguiente
+                                            ][0]
+                                            <= limite_transbordo
+                                        ):
+                                            evento_siguiente = (
+                                                salidas_siguientes[
+                                                    posicion_siguiente
+                                                ]
+                                            )
+                                            destinos_posibles |= (
+                                                mascara_posterior[
+                                                    evento_siguiente[3]
+                                                ]
+                                            )
+                                            posicion_siguiente += 1
+                                    destinos_evento_transbordo[
+                                        indice_cache
+                                    ] = destinos_posibles
+                                    marcas_evento_transbordo[
+                                        indice_cache
+                                    ] = marca_evento
+                                puede_abordar = (
+                                    destinos_evento_transbordo[indice_cache]
+                                    & (1 << grupo[1])
+                                ) != 0
+
+                        if puede_abordar:
+                            espacio = viaje[1] - viaje[3]
+                            abordados = grupo[4]
+                            if abordados > espacio:
+                                abordados = espacio
+                            espera = minuto - grupo[0]
+                            espera_total += espera * abordados
+                            cantidad_esperas += abordados
+                            total_abordajes += abordados
+                            metricas[indice_estacion][2] += espera * abordados
+                            metricas[indice_estacion][3] += abordados
+                            if espera > espera_maxima:
+                                espera_maxima = espera
+                            if espera > metricas[indice_estacion][4]:
+                                metricas[indice_estacion][4] = espera
+                            viaje[3] += abordados
+                            viaje[2].append(
+                                [
+                                    grupo[1],
+                                    grupo[2],
+                                    grupo[3],
+                                    abordados,
+                                ]
+                            )
+                            grupo[4] -= abordados
+                            esperando_estacion[indice_estacion] -= abordados
+                        if grupo[4] > 0:
+                            grupos_restantes.append(grupo)
+                        cabeza += 1
+                    colas[indice_estacion][indice_servicio] = (
+                        grupos_restantes
+                    )
+                    indices_cola[indice_estacion][indice_servicio] = 0
+                indice_evento += 1
+            minuto += 1
+
+        no_abordados = 0
+        pasajeros_a_bordo = 0
+        for viaje in viajes:
+            for pasajero in viaje[2]:
+                pasajeros_a_bordo += pasajero[3]
+
+        filas_estaciones = []
+        indice_estacion = 0
+        while indice_estacion < numero_estaciones:
+            total_en_cola = 0
+            indice_servicio = 0
+            while indice_servicio < numero_servicios:
+                cola = colas[indice_estacion][indice_servicio]
+                cabeza = indices_cola[indice_estacion][indice_servicio]
+                while cabeza < len(cola):
+                    grupo = cola[cabeza]
+                    cantidad = grupo[4]
+                    total_en_cola += cantidad
+                    no_abordados += cantidad
+                    espera = 1439 - grupo[0]
+                    espera_total += espera * cantidad
+                    cantidad_esperas += cantidad
+                    metricas[indice_estacion][2] += espera * cantidad
+                    metricas[indice_estacion][3] += cantidad
+                    if espera > espera_maxima:
+                        espera_maxima = espera
+                    if espera > metricas[indice_estacion][4]:
+                        metricas[indice_estacion][4] = espera
+                    cabeza += 1
+                indice_servicio += 1
+
+            for grupo in cola_sin_ruta[indice_estacion]:
+                cantidad = grupo[2]
+                total_en_cola += cantidad
+                no_abordados += cantidad
+                espera = 1439 - grupo[0]
+                espera_total += espera * cantidad
+                cantidad_esperas += cantidad
+                metricas[indice_estacion][2] += espera * cantidad
+                metricas[indice_estacion][3] += cantidad
+                if espera > espera_maxima:
+                    espera_maxima = espera
+                if espera > metricas[indice_estacion][4]:
+                    metricas[indice_estacion][4] = espera
+
+            metricas[indice_estacion][5] = total_en_cola
+            if metricas[indice_estacion][3] > 0:
+                promedio = (
+                    metricas[indice_estacion][2]
+                    / metricas[indice_estacion][3]
+                )
+            else:
+                promedio = 0
+            filas_estaciones.append(
+                [
+                    self._estaciones[indice_estacion],
+                    metricas[indice_estacion][0],
+                    total_en_cola,
+                    metricas[indice_estacion][1],
+                    promedio,
+                    metricas[indice_estacion][4],
+                    total_en_cola,
+                    metricas[indice_estacion][6],
+                ]
+            )
+            indice_estacion += 1
+
+        if cantidad_esperas > 0:
+            espera_promedio = espera_total / cantidad_esperas
+        else:
+            espera_promedio = 0
+        pasajeros_en_red = total_generados - total_completados
+        resumen = [
+            total_generados,
+            total_abordajes,
+            no_abordados,
+            espera_promedio,
+            espera_maxima,
+            cola_maxima_red,
+            pasajeros_en_red,
+            total_destinos_alcanzados,
+        ]
+        self._resultado_r10 = [resumen, filas_estaciones]
+        return self._resultado_r10
+
+    def resultado_simulacion(self):
+        """Devuelve una copia superficial de los resultados R10 para el front."""
+        resultado = []
+        if len(self._resultado_r10) == 0:
+            return resultado
+        resumen = []
+        for valor in self._resultado_r10[0]:
+            resumen.append(valor)
+        estaciones = []
+        for fila in self._resultado_r10[1]:
+            copia_fila = []
+            for valor in fila:
+                copia_fila.append(valor)
+            estaciones.append(copia_fila)
+        resultado.append(resumen)
+        resultado.append(estaciones)
+        return resultado
+
+    def _plan_servicios(self, origen, destino):
+        """Calcula el primer itinerario mínimo en servicios direccionales."""
+        if origen == destino:
+            return []
+        posicion_origen = self._posicion_estacion(origen)
+        posicion_destino = self._posicion_estacion(destino)
+        if posicion_origen == -1 or posicion_destino == -1:
+            return []
+        if not self._abiertas[posicion_origen] or not self._abiertas[posicion_destino]:
+            return []
+
+        mejor = []
+        mejor_cantidad = -1
+        for servicio_a in self._rutas_info:
+            paradas_a = servicio_a[1]
+            inicio_a = self._buscar_en_lista(paradas_a, origen)
+            fin_directo = self._buscar_en_lista(paradas_a, destino)
+            if inicio_a != -1 and fin_directo > inicio_a:
+                cantidad = fin_directo - inicio_a
+                if mejor_cantidad == -1 or cantidad < mejor_cantidad:
+                    mejor_cantidad = cantidad
+                    mejor = [[servicio_a[0], destino]]
+
+        indice_a = 0
+        while indice_a < len(self._rutas_info):
+            servicio_a = self._rutas_info[indice_a]
+            paradas_a = servicio_a[1]
+            inicio_a = self._buscar_en_lista(paradas_a, origen)
+            if inicio_a != -1:
+                indice_b = 0
+                while indice_b < len(self._rutas_info):
+                    if indice_b != indice_a:
+                        servicio_b = self._rutas_info[indice_b]
+                        paradas_b = servicio_b[1]
+                        fin_b = self._buscar_en_lista(paradas_b, destino)
+                        if fin_b != -1:
+                            indice_parada = inicio_a + 1
+                            while indice_parada < len(paradas_a):
+                                transbordo = paradas_a[indice_parada]
+                                inicio_b = self._buscar_en_lista(
+                                    paradas_b, transbordo
+                                )
+                                posicion_transbordo = self._posicion_estacion(
+                                    transbordo
+                                )
+                                if (
+                                    inicio_b != -1
+                                    and fin_b > inicio_b
+                                    and posicion_transbordo != -1
+                                    and self._abiertas[posicion_transbordo]
+                                ):
+                                    cantidad = (
+                                        indice_parada - inicio_a
+                                        + fin_b - inicio_b
+                                    )
+                                    if mejor_cantidad == -1 or cantidad < mejor_cantidad:
+                                        mejor_cantidad = cantidad
+                                        mejor = [
+                                            [servicio_a[0], transbordo],
+                                            [servicio_b[0], destino],
+                                        ]
+                                indice_parada += 1
+                    indice_b += 1
+            indice_a += 1
+        return mejor
+
+    def _buscar_flujo_estacion(self, estacion):
+        posicion = 0
+        while posicion < len(self._flujos_estaciones):
+            if self._flujos_estaciones[posicion][0] == estacion:
+                return posicion
+            posicion += 1
+        return -1
+
+    @staticmethod
+    def _contar_cola(cola):
+        cantidad = 0
+        for pasajero in cola:
+            cantidad += pasajero[5]
+        return cantidad
+
+    def _incremento_hora(self, minuto):
+        incremento = 0
+        for periodo in self._horas_pico:
+            desde = periodo[0]
+            hasta = periodo[1]
+            if desde <= hasta:
+                if desde <= minuto < hasta:
+                    incremento += periodo[2]
+            elif minuto >= desde or minuto < hasta:
+                incremento += periodo[2]
+        return incremento
+
+    def _validar_estacion_configurable(self, estacion):
+        nombre = self._normalizar(estacion)
+        if self._posicion_estacion(nombre) == -1:
+            raise ValueError("La estación indicada no existe.")
+        return nombre
+
+    @staticmethod
+    def _validar_cantidad(cantidad, nombre):
+        if not isinstance(cantidad, int) or cantidad < 0:
+            raise ValueError(nombre + " debe ser un entero no negativo.")
 
     def buses_rutas(self):
         """Devuelve los buses de las rutas ordenadas en O(R)."""

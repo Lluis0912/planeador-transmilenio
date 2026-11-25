@@ -1,3 +1,3 @@
-from .red import Red
+from .red import Red, simular_fila
 
-__all__ = ["Red"]
+__all__ = ["Red", "simular_fila"]

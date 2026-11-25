@@ -167,6 +167,106 @@ después de deshacer borra la pila de rehacer.
 - Los botones de flecha y Ctrl+Z/Ctrl+Y del panel llaman estos métodos del
   motor y refrescan los recorridos y el estado de estación mostrados.
 
+### R10 — Simulación de red durante un día
+
+`simular_fila(llegadas, frecuencia, capacidad)` simula una fila FIFO sencilla
+y devuelve `[abordados, espera_promedio, espera_maxima, cola_maxima,
+no_abordados]`. `llegadas[t]` es el número de pasajeros que aparece en el minuto
+`t`; hay un bus en el minuto cero y cada `frecuencia` minutos. La fila se
+representa con grupos `[minuto_de_llegada, cantidad]` y un índice de cabeza, así
+se conserva el orden sin mover toda la lista tras cada abordaje.
+
+- Es una función aislada para el ejercicio de una sola fila; el panel R10 usa
+  `Red.simular_dia()` y los eventos reales de `horarios.csv`.
+- Complejidad: **O(T + G)** tiempo y **O(G)** espacio, donde `T` es la duración
+  en minutos y `G` los grupos de llegada.
+- La espera promedio se pondera por pasajeros. Quienes siguen en la fila al
+  cierre se cuentan como no abordados y su espera incompleta se mide hasta el
+  final del periodo.
+
+El panel "Simulación R10" ejecuta `Red.simular_dia()` por 1440 minutos y usa las
+llegadas de los buses de `horarios.csv`, no una frecuencia sintética. El flujo
+global genera pasajeros en todas las estaciones abiertas; cada estación puede
+sobrescribir esa tasa. El botón "Aplicar a todas" aplica el flujo global y
+restablece las sobrescrituras locales. Cada grupo generado en una estación
+elige al azar, con probabilidad uniforme, entre los destinos que tienen un
+itinerario topológico y un servicio programado utilizable. Solo se genera
+demanda si algún bus que sirve el trayecto puede salir dentro de los siguientes
+30 minutos y pasar por el destino; para un transbordo, el siguiente servicio
+también debe salir dentro de 30 minutos de la conexión y llegar al destino.
+Si no hay ningún itinerario así, no se genera ese grupo. El límite se aplica a la espera
+por una salida programada, no a la espera total: con capacidad insuficiente,
+un pasajero aún puede esperar más de 30 minutos.
+
+El argumento opcional `semilla` de `simular_dia(semilla)` permite repetir el
+mismo sorteo. Los aumentos por hora pico se suman al flujo en todas las
+estaciones abiertas, pero también respetan la disponibilidad de los horarios.
+`configurar_capacidad_universal(capacidad)` fija un único cupo que se aplica a
+todos los buses y recorridos. La interfaz presenta el total de pasajeros y las
+métricas por estación, incluida la cantidad que terminó su viaje en esa
+estación (no cuenta bajadas de transbordo como destino final).
+
+**Estructuras del motor:** `horarios.csv` se prepara como eventos
+`[minuto, viaje, estación, orden_de_parada]` ordenados por merge sort. Cada
+llegada identifica un viaje y hace avanzar su manifiesto. Las colas usan una
+matriz de listas FIFO indexada por estación y servicio; cada lote contiene
+`[minuto_llegada, destino_final, próxima_estación_de_bajada,
+servicio_de_transbordo, cantidad]`. Un índice de cabeza permite consumir la
+cola sin eliminar del inicio de la lista. Los pasajeros se guardan por grupos,
+no como objetos individuales. Cada viaje mantiene la capacidad universal,
+ocupación y su manifiesto; al llegar a un destino, los pasajeros completan el recorrido, y
+quienes deben transbordar entran en la cola del siguiente servicio.
+La métrica de llegadas a destino se acumula por estación al completar cada
+lote, en **O(1)** por lote, y se devuelve como la última columna de cada fila
+de estación; el último valor del resumen es su total en la red. Los itinerarios
+se agrupan por servicio y transbordo. En cada minuto, máscaras de bits
+identifican rápidamente qué destinos posteriores puede alcanzar cada salida.
+Al abordar, el motor vuelve a validar el recorrido real del viaje para evitar
+que un pasajero tome una salida que no llega a su destino o conexión. Si no
+existe un itinerario con salidas dentro de la ventana permitida, ese grupo no
+se genera.
+
+El resumen de la simulación devuelve
+`[generados, abordajes, no_abordados, espera_promedio, espera_maxima,
+cola_maxima, pasajeros_en_red, llegadas_a_destino]`. Cada fila de estación
+devuelve `[nombre, generados, esperando_al_final, cola_maxima, espera_promedio,
+espera_maxima, no_abordados, llegadas_a_destino]`.
+
+**Emparejamiento de viajes:** `horarios.csv` no contiene identificadores de
+vehículo. Para reconstruir cada viaje, el motor asocia la primera hora de cada
+parada al primer viaje, la segunda hora al segundo, etc. Esta es una
+aproximación determinista de la información disponible, no una garantía de que
+cada fila pertenezca al mismo vehículo. Los eventos fuera del día simulado se
+omiten. Los archivos fuente no se modifican.
+
+- Los eventos se indexan por viaje y estación, y las salidas por estación y
+  servicio. Máscaras de bits guardan las estaciones posteriores de cada evento.
+  Crear estos índices cuesta **O(H + V × N + N × R)** tiempo y espacio, donde
+  `H` es la cantidad de eventos horarios, `V` los viajes reconstruidos, `N`
+  las estaciones y `R` los servicios.
+- Para no ejecutar una búsqueda binaria por cada destino y minuto, el motor
+  precalcula la posición de la primera salida posterior a cada minuto para
+  cada par estación-servicio con horarios. Si `S` es la cantidad de esos pares,
+  este índice cuesta **O(1440 × S + H)** tiempo y **O(1440 × S)** espacio.
+- Los itinerarios directos y de un transbordo se preparan una vez por origen.
+  Si `C` cuenta los tramos candidatos y `D × K` el trabajo de agrupar `D`
+  opciones de destino en `K` combinaciones de servicios, su coste es
+  **O(C + D × K)** por origen con demanda posible. Esto evita reconstruir
+  combinaciones de recorridos dentro de cada minuto.
+- La simulación cuesta **O(1440 × N + W + B + Q)**, además de los índices y
+  el precálculo anteriores. `W` cuenta las salidas examinadas por las
+  combinaciones de servicio dentro de ventanas de 30 minutos, `B` las opciones
+  de destino comprobadas con máscaras y `Q` los grupos de pasajeros revisados
+  al llegar los buses. El número de pasajeros individuales no multiplica el
+  trabajo: las llegadas y abordajes se procesan por lotes.
+- El espacio total de la simulación es **O(H + V × N + N × R + 1440 × S + D
+  + G)**, donde `G` es la cantidad de grupos en colas y manifiestos. El límite
+  de 30 minutos restringe la espera por salida programada; una capacidad
+  insuficiente todavía puede causar una espera mayor.
+- La espera se pondera por cantidad de pasajeros. Los no abordados cuentan a
+  quienes siguen esperando al cierre; pasajeros que ya abordaron pero siguen
+  a bordo se incluyen en el total de personas en la red.
+
 ### Operaciones internas importantes
 
 - `Red.__init__`: lee el CSV y usa merge sort propio para ordenar las
