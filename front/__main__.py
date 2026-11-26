@@ -1,4 +1,6 @@
+from copy import deepcopy
 from pathlib import Path
+from threading import Thread
 import tkinter as tk
 from tkinter import ttk
 
@@ -9,10 +11,11 @@ class PlaneadorApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Planeador TransMilenio")
-        self.geometry("900x650")
-        self.minsize(760, 520)
+        self.geometry("1100x850")
+        self.minsize(900, 700)
         carpeta_datos = Path(__file__).resolve().parents[1] / "datos"
         self.red = Red(carpeta_datos)
+        self._benchmark_en_curso = False
 
         self.pestanas = ttk.Notebook(self)
         self.pestanas.pack(fill="both", expand=True, padx=12, pady=12)
@@ -496,10 +499,10 @@ class PlaneadorApp(tk.Tk):
         # R10: formularios de demanda/capacidad y resultados; el motor genera,
         # enruta y simula pasajeros, buses, colas, esperas y transbordos.
         panel = ttk.Frame(pestañas, padding=10)
-        pestañas.add(panel, text="Simulación R10")
+        pestañas.add(panel, text="Simulación R10-R11")
 
         configuracion = ttk.LabelFrame(
-            panel, text="Configuración de demanda para un día", padding=8
+            panel, text="Configuración de demanda hasta medianoche", padding=8
         )
         configuracion.pack(fill="x")
 
@@ -608,15 +611,87 @@ class PlaneadorApp(tk.Tk):
             command=self._configurar_capacidad_r10,
         ).grid(row=1, column=2, padx=(8, 0))
         ttk.Button(
-            ejecucion, text="Simular 1 día", command=self._ejecutar_simulacion_r10
+            ejecucion, text="Simular intervalo", command=self._ejecutar_simulacion_r10
         ).grid(row=1, column=3, padx=(8, 0))
         for columna in range(4):
             ejecucion.columnconfigure(columna, weight=1)
 
+        # R11: compara tiempos con totales duplicados y muestra el Big O de R10.
+        r11 = ttk.LabelFrame(
+            panel, text="R11 - Total exacto y crecimiento del tiempo", padding=8
+        )
+        r11.pack(fill="x", pady=(8, 0))
+        self.modo_demanda_r10 = tk.StringVar(value="flujo")
+        ttk.Radiobutton(
+            r11,
+            text="Usar flujos configurados",
+            variable=self.modo_demanda_r10,
+            value="flujo",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(
+            r11,
+            text="Usar total exacto",
+            variable=self.modo_demanda_r10,
+            value="fijo",
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Label(r11, text="Pasajeros exactos").grid(
+            row=0, column=2, sticky="e", padx=(12, 4)
+        )
+        self.total_fijo_r10 = tk.StringVar(value="100000")
+        ttk.Entry(r11, textvariable=self.total_fijo_r10, width=11).grid(
+            row=0, column=3, sticky="w"
+        )
+        ttk.Label(r11, text="Iniciar (HH:MM)").grid(
+            row=0, column=4, sticky="e", padx=(12, 4)
+        )
+        self.hora_inicio_r10 = tk.StringVar(value="00:00")
+        ttk.Entry(r11, textvariable=self.hora_inicio_r10, width=8).grid(
+            row=0, column=5, sticky="w"
+        )
+        ttk.Label(r11, text="Primer N del benchmark").grid(
+            row=1, column=0, sticky="w", pady=(6, 0)
+        )
+        self.inicio_benchmark_r11 = tk.StringVar(value="10000")
+        ttk.Entry(r11, textvariable=self.inicio_benchmark_r11, width=11).grid(
+            row=1, column=1, sticky="w", padx=(8, 0), pady=(6, 0)
+        )
+        self.boton_benchmark_r11 = ttk.Button(
+            r11,
+            text="Medir 5 tamaños duplicados",
+            command=self._ejecutar_benchmark_r11,
+        )
+        self.boton_benchmark_r11.grid(
+            row=1, column=2, columnspan=2, sticky="w", padx=(12, 0), pady=(6, 0)
+        )
+        ttk.Label(
+            r11,
+            text=(
+                "El total fijo ignora flujos y picos. Se asigna a estaciones/minutos "
+                "con ruta; el destino de cada lote sigue siendo aleatorio."
+            ),
+        ).grid(row=2, column=0, columnspan=6, sticky="w", pady=(5, 0))
+        for columna in range(6):
+            r11.columnconfigure(columna, weight=1)
+
+        self.resumen_benchmark_r11 = ttk.Label(
+            panel,
+            text=(
+                "Big O total R10: O(1440N + W + B + Q). Q cuenta lotes "
+                "procesados, no personas: se espera crecimiento lineal en lotes "
+                "mientras se activan slots, y posible saturación al llenarlos."
+            ),
+            wraplength=1000,
+        )
+        self.resumen_benchmark_r11.pack(anchor="w", pady=(6, 2))
+        self.grafica_benchmark_r11 = tk.Canvas(
+            panel, width=700, height=190, background="white", highlightthickness=1
+        )
+        self.grafica_benchmark_r11.pack(fill="x", pady=(0, 5))
+
         self.mensaje_r10 = ttk.Label(panel, text="")
         self.mensaje_r10.pack(anchor="w", pady=(5, 0))
         self.resumen_r10 = ttk.Label(
-            panel, text="Configura demanda y ejecuta la simulación diaria."
+            panel, text="Configura demanda y ejecuta la simulación hasta medianoche."
         )
         self.resumen_r10.pack(anchor="w", pady=(2, 6))
 
@@ -625,7 +700,7 @@ class PlaneadorApp(tk.Tk):
             "avg_wait", "max_wait", "not_boarded", "alighted",
         )
         self.tabla_r10 = ttk.Treeview(
-            panel, columns=columnas, show="headings", height=8
+            panel, columns=columnas, show="headings", height=6
         )
         titulos = (
             ("station", "Estación"),
@@ -715,12 +790,18 @@ class PlaneadorApp(tk.Tk):
         )
 
     def _ejecutar_simulacion_r10(self):
-        # R10: ejecuta el modelo diario del motor y solo presenta sus métricas.
+        # R10-R11: el motor aplica el flujo o el total fijo y devuelve métricas.
         try:
             self.red.configurar_capacidad_universal(
                 int(self.capacidad_universal_r10.get())
             )
-            resultado = self.red.simular_dia()
+            total_pasajeros = None
+            if self.modo_demanda_r10.get() == "fijo":
+                total_pasajeros = int(self.total_fijo_r10.get())
+            resultado = self.red.simular_dia(
+                total_pasajeros=total_pasajeros,
+                hora_inicio=self.hora_inicio_r10.get(),
+            )
         except ValueError as error:
             self.mensaje_r10.configure(text=str(error))
             return
@@ -755,7 +836,203 @@ class PlaneadorApp(tk.Tk):
                     fila[7],
                 ),
             )
-        self.mensaje_r10.configure(text="Simulación de un día completada.")
+        self.mensaje_r10.configure(
+            text="Simulación hasta medianoche completada."
+        )
+
+    def _ejecutar_benchmark_r11(self):
+        if self._benchmark_en_curso:
+            return
+        try:
+            capacidad = int(self.capacidad_universal_r10.get())
+            inicio = int(self.inicio_benchmark_r11.get())
+            if inicio <= 0:
+                raise ValueError("El primer N del benchmark debe ser mayor que cero.")
+            red_benchmark = deepcopy(self.red)
+            red_benchmark.configurar_capacidad_universal(capacidad)
+            hora_inicio = self.hora_inicio_r10.get()
+        except ValueError as error:
+            self.mensaje_r10.configure(text=str(error))
+            return
+
+        tamaños = []
+        cantidad = inicio
+        for _ in range(5):
+            tamaños.append(cantidad)
+            cantidad *= 2
+        self._benchmark_en_curso = True
+        self.boton_benchmark_r11.configure(state="disabled")
+        self.mensaje_r10.configure(
+            text="Ejecutando el benchmark en una copia de la red..."
+        )
+
+        def medir():
+            try:
+                mediciones = red_benchmark.medir_rendimiento_r10(
+                    tamaños, hora_inicio
+                )
+            except (ValueError, RuntimeError) as error:
+                mensaje = str(error)
+                self.after(
+                    0,
+                    lambda mensaje=mensaje: self._finalizar_benchmark_r11(
+                        mensaje=mensaje
+                    ),
+                )
+                return
+            self.after(
+                0,
+                lambda mediciones=mediciones: self._finalizar_benchmark_r11(
+                    mediciones=mediciones
+                ),
+            )
+
+        Thread(target=medir, daemon=True).start()
+
+    def _finalizar_benchmark_r11(self, mediciones=None, mensaje=None):
+        self._benchmark_en_curso = False
+        self.boton_benchmark_r11.configure(state="normal")
+        if mensaje is not None:
+            self.mensaje_r10.configure(text="Benchmark no completado: " + mensaje)
+            return
+
+        segundos_base = mediciones[0]
+        mediciones_puntuales = mediciones[1]
+        self._dibujar_grafica_r11(mediciones)
+        texto = "Mediciones: "
+        for indice, medicion in enumerate(mediciones_puntuales):
+            if indice > 0:
+                medicion_anterior = mediciones_puntuales[indice - 1]
+                razon = medicion[1] / medicion_anterior[1]
+                variacion_anterior = medicion_anterior[1] - segundos_base
+                variacion_actual = medicion[1] - segundos_base
+                if variacion_anterior > 0 and variacion_actual > 0:
+                    razon_variable = variacion_actual / variacion_anterior
+                    texto_razon_variable = (
+                        " | incremento x" + format(razon_variable, ".2f")
+                    )
+                else:
+                    texto_razon_variable = ""
+                texto += (
+                    " | x" + str(medicion[0])
+                    + ": " + format(medicion[1], ".3f") + " s"
+                    + " (razón x" + format(razon, ".2f") + ")"
+                    + texto_razon_variable
+                )
+            else:
+                texto += (
+                    str(medicion[0]) + ": "
+                    + format(medicion[1], ".3f") + " s"
+                )
+        self.resumen_benchmark_r11.configure(
+            text=(
+                "Base sin pasajeros: " + format(segundos_base, ".3f")
+                + " s. Referencia esperada: base + O(n) en lotes con red fija "
+                "(incremento x2 al duplicar N, antes de saturar slots). "
+                "La razón del incremento sobre la base es más útil que la total: "
+                "cerca de x1 sugiere meseta; x2, crecimiento lineal; valores "
+                "crecientes, superlineal. " + texto
+            )
+        )
+        self.mensaje_r10.configure(
+            text="Benchmark R11 completado; la tabla de R10 no fue modificada."
+        )
+
+    def _dibujar_grafica_r11(self, mediciones):
+        lienzo = self.grafica_benchmark_r11
+        lienzo.delete("all")
+        segundos_base = mediciones[0]
+        mediciones = mediciones[1]
+        ancho = max(lienzo.winfo_width(), 700)
+        alto = max(lienzo.winfo_height(), 190)
+        izquierda = 58
+        derecha = ancho - 22
+        arriba = 24
+        abajo = alto - 34
+        primer_n = mediciones[0][0]
+        ultimo_n = mediciones[-1][0]
+        maximo_tiempo = mediciones[0][1]
+        trabajo_inicial = mediciones[0][1] - segundos_base
+        if trabajo_inicial < 0:
+            trabajo_inicial = 0
+        tiempo_esperado_final = (
+            segundos_base + trabajo_inicial * ultimo_n / primer_n
+        )
+        for medicion in mediciones:
+            if medicion[1] > maximo_tiempo:
+                maximo_tiempo = medicion[1]
+        if tiempo_esperado_final > maximo_tiempo:
+            maximo_tiempo = tiempo_esperado_final
+        if maximo_tiempo <= 0:
+            maximo_tiempo = 1
+
+        lienzo.create_line(izquierda, abajo, derecha, abajo, fill="#555555")
+        lienzo.create_line(izquierda, arriba, izquierda, abajo, fill="#555555")
+        lienzo.create_text(
+            12, arriba, text="s", anchor="w", fill="#333333"
+        )
+        lienzo.create_text(
+            izquierda - 6, arriba, text=format(maximo_tiempo, ".1f"),
+            anchor="e", fill="#333333",
+        )
+        lienzo.create_text(
+            izquierda - 6, abajo, text="0", anchor="e", fill="#333333"
+        )
+        lienzo.create_text(
+            (izquierda + derecha) // 2,
+            alto - 10,
+            text="Pasajeros (N)",
+            fill="#333333",
+        )
+
+        puntos_observados = []
+        puntos_esperados = []
+        tiempo_inicial = mediciones[0][1]
+        for medicion in mediciones:
+            if ultimo_n == primer_n:
+                x = (izquierda + derecha) / 2
+            else:
+                x = izquierda + (
+                    (medicion[0] - primer_n)
+                    * (derecha - izquierda)
+                    / (ultimo_n - primer_n)
+                )
+            y_observado = abajo - (
+                medicion[1] * (abajo - arriba) / maximo_tiempo
+            )
+            puntos_observados.extend([x, y_observado])
+            tiempo_esperado = (
+                segundos_base
+                + max(tiempo_inicial - segundos_base, 0)
+                * medicion[0]
+                / primer_n
+            )
+            y_esperado = abajo - (
+                tiempo_esperado * (abajo - arriba) / maximo_tiempo
+            )
+            puntos_esperados.extend([x, y_esperado])
+            lienzo.create_oval(
+                x - 3, y_observado - 3, x + 3, y_observado + 3,
+                fill="#1769aa", outline="#1769aa",
+            )
+            lienzo.create_text(
+                x, abajo + 10, text=str(medicion[0]), anchor="n",
+                fill="#333333",
+            )
+        lienzo.create_line(
+            *puntos_esperados, fill="#d08b00", dash=(5, 3), width=2
+        )
+        lienzo.create_line(
+            *puntos_observados, fill="#1769aa", width=2
+        )
+        lienzo.create_text(
+            izquierda + 8, arriba + 8, text="Observado",
+            anchor="w", fill="#1769aa",
+        )
+        lienzo.create_text(
+            izquierda + 105, arriba + 8, text="Esperado: base + lineal en lotes",
+            anchor="w", fill="#a16b00",
+        )
 
 
 def main():

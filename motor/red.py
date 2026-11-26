@@ -1,5 +1,6 @@
 import csv
 import random
+import time
 
 
 def simular_fila(llegadas, frecuencia, capacidad):
@@ -833,9 +834,11 @@ class Red:
                     destinos.append([indice_destino, itinerario])
         return destinos
 
-    def simular_dia(self, semilla=None):
+    def simular_dia(
+        self, semilla=None, total_pasajeros=None, hora_inicio="00:00"
+    ):
         """
-        Simula 24 horas con las llegadas reales registradas en horarios.csv.
+        Simula desde hora_inicio hasta medianoche con horarios reales.
 
         Cada viaje se crea a partir de las secuencias de horarios por parada.
         Las colas se guardan como matriz estación x servicio; cada celda es una
@@ -843,17 +846,21 @@ class Red:
         conservando, en orden, los grupos que no puede abordar ese bus.
         El evento de horario identifica minuto, viaje, estación y orden de parada.
 
-        Cada lote elige uniformemente un destino distinto del origen entre los
-        que tienen un itinerario con salidas utilizables en la ventana de 30
-        minutos. Se valida el viaje real al abordar y también la salida de
-        transbordo. La tasa global aplica a todas las estaciones y la demanda
-        pico se suma.
+        En modo de flujo, cada lote elige un destino alcanzable con una salida
+        dentro de 30 minutos y se conservan las tasas globales/locales y picos.
+        Con total_pasajeros, elige entre destinos topológicamente alcanzables y
+        distribuye exactamente N entre pares minuto-estación abiertos con ruta.
+        Este modo ignora flujos y picos; los horarios se validan al abordar y la
+        espera inicial puede superar 30 minutos.
 
         Retorna [resumen, estaciones]. El resumen termina con pasajeros_en_red
         y llegadas a destino; cada fila de estación termina con su total de
         llegadas a destino, sin contar transbordos.
 
         La semilla opcional permite repetir una simulación para pruebas.
+        Para N fijo, el conteo de estaciones abiertas con ruta cuesta O(N).
+        Si E es el número de slots minuto-estación disponibles, la distribución
+        uniforme ocupa O(E) tiempo como máximo.
         Los índices de salidas por minuto cuestan O(1440*S + H), donde S es
         el número de pares estación-servicio con horarios y H los eventos.
         La simulación cuesta O(1440*N + W + B + Q): W cuenta las salidas
@@ -861,6 +868,12 @@ class Red:
         los grupos de pasajeros procesados. Espacio O(H + V*N + N*R +
         1440*S + D + G), con V viajes, D opciones de destino y G grupos.
         """
+        minuto_inicio = self._convertir_hora(hora_inicio)
+        if minuto_inicio is None:
+            raise ValueError("La hora de inicio debe tener formato HH:MM.")
+        if total_pasajeros is not None:
+            self._validar_cantidad(total_pasajeros, "El total de pasajeros")
+
         self._asegurar_eventos_horario_actualizados()
         numero_estaciones = len(self._estaciones)
         numero_servicios = len(self._rutas_info)
@@ -982,7 +995,11 @@ class Red:
         opciones_por_estacion = []
         for indice_origen in range(numero_estaciones):
             opciones = []
-            if flujos[indice_origen] > 0 or len(self._horas_pico) > 0:
+            if (
+                flujos[indice_origen] > 0
+                or len(self._horas_pico) > 0
+                or total_pasajeros is not None
+            ):
                 itinerarios_estacion = []
                 for indice_destino in range(numero_estaciones):
                     itinerarios_estacion.append(
@@ -1024,6 +1041,23 @@ class Red:
                         grupo_itinerario[4] |= 1 << indice_destino
             opciones_por_estacion.append(opciones)
 
+        numero_slots_fijos = 0
+        if total_pasajeros is not None and total_pasajeros > 0:
+            estaciones_con_ruta = 0
+            for indice_origen in range(numero_estaciones):
+                if (
+                    self._abiertas[indice_origen]
+                    and len(opciones_por_estacion[indice_origen]) > 0
+                ):
+                    estaciones_con_ruta += 1
+            numero_slots_fijos = (
+                estaciones_con_ruta * (1440 - minuto_inicio)
+            )
+            if numero_slots_fijos == 0:
+                raise ValueError(
+                    "No hay estaciones abiertas con rutas para generar pasajeros."
+                )
+
         generador = random.Random(semilla)
         marcas_evento_transbordo = [-1] * (
             numero_estaciones * numero_servicios
@@ -1047,38 +1081,69 @@ class Red:
         espera_maxima = 0
         cola_maxima_red = 0
         indice_evento = 0
-        minuto = 0
+        while (
+            indice_evento < len(self._eventos_horario)
+            and self._eventos_horario[indice_evento][0] < minuto_inicio
+        ):
+            indice_evento += 1
+        minuto = minuto_inicio
+        indice_slot_fijo = 0
 
         while minuto < 1440:
             indice_estacion = 0
             while indice_estacion < numero_estaciones:
-                flujo = flujos[indice_estacion]
-                if flujo >= 0 and self._abiertas[indice_estacion]:
-                    llegadas = flujo + self._incremento_hora(minuto)
+                llegadas = 0
+                itinerarios_disponibles = []
+                opciones_origen = opciones_por_estacion[indice_estacion]
+                if self._abiertas[indice_estacion]:
+                    if total_pasajeros is None:
+                        flujo = flujos[indice_estacion]
+                        if flujo >= 0:
+                            llegadas = flujo + self._incremento_hora(minuto)
+                    elif total_pasajeros > 0:
+                        if len(opciones_origen) > 0:
+                            llegadas = (
+                                ((indice_slot_fijo + 1) * total_pasajeros)
+                                // numero_slots_fijos
+                                - (indice_slot_fijo * total_pasajeros)
+                                // numero_slots_fijos
+                            )
+                            indice_slot_fijo += 1
+
                     if llegadas > 0:
-                        if numero_estaciones < 2:
-                            raise ValueError(
-                                "Se necesitan al menos dos estaciones para asignar destinos."
+                        if total_pasajeros is None:
+                            if numero_estaciones < 2:
+                                raise ValueError(
+                                    "Se necesitan al menos dos estaciones para asignar destinos."
+                                )
+                            itinerarios_disponibles = (
+                                self._itinerarios_con_salida_futura(
+                                    indice_estacion,
+                                    minuto,
+                                    opciones_por_estacion[indice_estacion],
+                                    salidas,
+                                    posiciones_por_minuto,
+                                    eventos_por_viaje,
+                                    mascara_posterior,
+                                )
                             )
-                        itinerarios_disponibles = (
-                            self._itinerarios_con_salida_futura(
-                                indice_estacion,
-                                minuto,
-                                opciones_por_estacion[indice_estacion],
-                                salidas,
-                                posiciones_por_minuto,
-                                eventos_por_viaje,
-                                mascara_posterior,
-                            )
-                        )
-                        if len(itinerarios_disponibles) == 0:
-                            indice_estacion += 1
-                            continue
-                        itinerario_disponible = itinerarios_disponibles[
-                            generador.randrange(len(itinerarios_disponibles))
-                        ]
-                        indice_destino = itinerario_disponible[0]
-                        itinerario = itinerario_disponible[1]
+                            if len(itinerarios_disponibles) == 0:
+                                indice_estacion += 1
+                                continue
+                            itinerario_disponible = itinerarios_disponibles[
+                                generador.randrange(len(itinerarios_disponibles))
+                            ]
+                            indice_destino = itinerario_disponible[0]
+                            itinerario = itinerario_disponible[1]
+                        else:
+                            opcion = opciones_origen[
+                                generador.randrange(len(opciones_origen))
+                            ]
+                            destino_elegido = opcion[3][
+                                generador.randrange(len(opcion[3]))
+                            ]
+                            indice_destino = destino_elegido[0]
+                            itinerario = destino_elegido[1]
                         total_generados += llegadas
                         metricas[indice_estacion][0] += llegadas
                         servicio = itinerario[0]
@@ -1360,6 +1425,49 @@ class Red:
         resultado.append(resumen)
         resultado.append(estaciones)
         return resultado
+
+    def medir_rendimiento_r10(self, cantidades, hora_inicio="00:00"):
+        """
+        Mide R10 una vez por cada total fijo, sin incluir preparación externa.
+
+        Retorna [segundos_base, [[pasajeros, segundos], ...]]. La medición base
+        ejecuta la misma simulación con cero llegadas para estimar el costo fijo.
+        El tiempo monotónico de `time` está permitido para R11; red y horario
+        se mantienen iguales entre muestras para que solo cambie el total.
+        """
+        if not isinstance(cantidades, list) or len(cantidades) == 0:
+            raise ValueError("Se requiere una lista de tamaños de prueba.")
+        for cantidad in cantidades:
+            self._validar_cantidad(cantidad, "Cada tamaño")
+            if cantidad == 0:
+                raise ValueError("Los tamaños del benchmark deben ser mayores que cero.")
+        if self._convertir_hora(hora_inicio) is None:
+            raise ValueError("La hora de inicio debe tener formato HH:MM.")
+
+        self._asegurar_eventos_horario_actualizados()
+        inicio_base = time.perf_counter()
+        self.simular_dia(
+            semilla=42,
+            total_pasajeros=0,
+            hora_inicio=hora_inicio,
+        )
+        segundos_base = time.perf_counter() - inicio_base
+
+        mediciones = []
+        for cantidad in cantidades:
+            inicio = time.perf_counter()
+            resultado = self.simular_dia(
+                semilla=42,
+                total_pasajeros=cantidad,
+                hora_inicio=hora_inicio,
+            )
+            segundos = time.perf_counter() - inicio
+            if resultado[0][0] != cantidad:
+                raise RuntimeError(
+                    "La simulación no generó el total exacto solicitado."
+                )
+            mediciones.append([cantidad, segundos])
+        return [segundos_base, mediciones]
 
     def _plan_servicios(self, origen, destino):
         """Helper del prototipo R10 por frecuencia; R5 usa `viaje()`."""
