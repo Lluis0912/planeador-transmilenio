@@ -45,7 +45,7 @@ longitudes acotadas; si `L` es la longitud del texto, normalizarlo cuesta
 | R8 | `Red.cerrar` y `Red.reabrir`: el estado se guarda en `_abiertas`, en paralelo con `_estaciones`. | Buscar la estación `O(log N)` y guardar el cambio delta en `O(1)`. La lista paralela permite encontrar y modificar el estado con el mismo índice. |
 | R9 | `Red.deshacer` y `Red.rehacer`: dos listas de acciones delta usadas como pilas LIFO. | Aplicar y mover una acción cuesta `O(1)` amortizado: cambios de estado guardan un booleano; ediciones de ruta guardan referencias a las listas antes/después. Una edición/deshacer/rehacer de ruta invalida las cachés R6 y R10. Espacio `O(C + PΣ)`, donde `C` son cambios y `PΣ` la suma de paradas en versiones de ruta conservadas. |
 | R10 | `Red.simular_dia`: eventos de horario, matriz de colas estación-servicio, lotes FIFO, manifiestos de viaje, máscaras de bits de paradas y posiciones de salida precalculadas por minuto. Acepta hora de inicio hasta medianoche y conserva el modo de flujos. | Ver el análisis abajo. Un lote representa pasajeros que llegan juntos; no se crea un objeto por persona. |
-| R11 | El modo de total exacto reparte `P_total` entre slots abiertos minuto-estación. `Red.medir_rendimiento_r10` mide cinco tamaños duplicados y un tiempo base con `time.perf_counter`; el frontend grafica tiempo observado y referencia esperada. | El reparto cuesta `O(E)` tiempo y `O(1)` espacio adicional. El benchmark cuesta una simulación base más las cinco simulaciones medidas; el trabajo fuera de cada cronómetro (copia de la red y gráfica) no se mide. |
+| R11 | No agrega otro simulador: `Red.medir_rendimiento_r10` repite `Red.simular_dia` usando el total real `n` de la última R10 y `2n`, `4n`, `8n`, `16n`. Hace 3 mediciones por tamaño y grafica el promedio. | Compara el mismo algoritmo, red, hora y capacidad. Una base sin pasajeros ayuda a separar el costo fijo; las mediciones son aproximadas, no deben duplicarse exactamente. |
 
 `Red.viaje` busca, según el alcance actual, viajes directos o con un único
 transbordo. No promete encontrar itinerarios que necesiten más transbordos.
@@ -109,21 +109,27 @@ Estructuras y costos:
   manifiestos. Las colas se agrupan por estación y servicio; cada llegada de
   bus conserva en orden los grupos que no puede abordar. El procesamiento
   depende de lotes, no de objetos por pasajero.
-- Para el total exacto, `E` es la cantidad de pares minuto-estación abiertos
-  con una ruta topológica en el intervalo. Calcular `E` cuesta `O(N)` y repartir
-  el total cuesta `O(E)` sin guardar un arreglo de pasajeros. Con red, horarios
-  y capacidad fijos, el número de lotes activos crece hasta `min(P_total, E)`;
-  por ello se espera crecimiento aproximadamente lineal en `P_total` mientras
-  aparecen lotes nuevos y una posible meseta cuando los slots ya tienen lote.
-  El tamaño numérico de los contadores se trata como `O(1)` bajo el modelo RAM.
-- R11 repite la simulación con `N0`, `2N0`, `4N0`, `8N0` y `16N0`, usando la
-  misma red, hora de inicio, capacidad y semilla. También mide una corrida de
-  cero pasajeros para estimar el costo fijo. La caché de eventos se prepara
-  antes de medir. Cada cronómetro incluye el costo completo de `simular_dia`
-  (índices por llamada incluidos), pero no la copia aislada de la red ni el
-  dibujo. La gráfica compara las muestras con `base + O(n)` en lotes;
-  las razones de duplicación ayudan a ver saturación, crecimiento lineal o
-  superlineal. Las mediciones son empíricas y dependen del equipo.
+- R11 usa como `n` el total que realmente generó la última R10. Si R10 se
+  ejecutó por flujo, el benchmark convierte ese conteo en total exacto para
+  poder duplicarlo; conserva red, hora y capacidad. Promedia tres corridas por
+  tamaño y tres corridas base de cero pasajeros. Big O es una tendencia, no
+  predice que el tiempo real se duplique exactamente: hay costo fijo, lotes,
+  capacidad, transferencias y ruido del equipo.
+- Con los CSV actuales: `N=147` estaciones, `R=181` servicios, `H=140.492`
+  horarios, `A=1.927` pares estación-servicio y `V=13.560` viajes. En un día,
+  `T=1440`; por eso `T·N` son hasta `211.680` revisiones estación-minuto.
+- Fórmula: `O(N·R + H + 1440·A + V·N + N·(C + D·K) + T·N + W + B + Q)`.
+  Cada término significa:
+  - `N·R`: preparar colas por estación y servicio.
+  - `H`: procesar horarios y eventos.
+  - `1440·A`: preparar salidas por minuto y par estación-servicio.
+  - `V·N`: indexar viajes por estación.
+  - `N·(C + D·K)`: preparar itinerarios posibles desde cada origen.
+  - `T·N`: recorrer minutos y estaciones.
+  - `W`: revisar salidas y conexiones posibles.
+  - `B`: comprobar destinos candidatos.
+  - `Q`: procesar grupos en colas y buses; es el término que cambia con la
+    carga, no se crea un registro por cada pasajero.
 - Espacio total: `O(H + VN + NR + 1440A + D + G)`, donde `G` es el número de
   grupos en espera o a bordo. La capacidad del bus se configura de forma
   universal.
@@ -139,9 +145,13 @@ destino excluye bajadas de transbordo.
 
 `front/__main__.py` tiene una pestaña/panel por requisito: búsqueda R1–R2,
 rango R3, próximo bus R4, plan R5, ranking R6, edición R7, estado R8,
-deshacer/rehacer R9 y simulación R10–R11. Los callbacks convierten entradas,
-llaman a `Red` y muestran las respuestas; las decisiones, validaciones y
-estructuras de datos permanecen en `motor/`.
+deshacer/rehacer R9 y simulación R10–R11. R10 presenta configuración y
+resultados; R11 tiene una vista interna independiente para repetir y graficar
+las mediciones sin ocultar la tabla de R10. La vista R11 tiene desplazamiento
+vertical y la gráfica incluye una barra horizontal para consultar las etiquetas
+X cuando no caben en la ventana. La tabla de R10 también tiene desplazamiento
+vertical. Los callbacks convierten entradas, llaman a `Red` y muestran las
+respuestas; las decisiones, validaciones y estructuras permanecen en `motor/`.
 
 Las pruebas locales están en `pruebas/`:
 

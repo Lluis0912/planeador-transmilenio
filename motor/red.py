@@ -1042,7 +1042,7 @@ class Red:
             opciones_por_estacion.append(opciones)
 
         numero_slots_fijos = 0
-        if total_pasajeros is not None and total_pasajeros > 0:
+        if total_pasajeros is not None:
             estaciones_con_ruta = 0
             for indice_origen in range(numero_estaciones):
                 if (
@@ -1053,10 +1053,11 @@ class Red:
             numero_slots_fijos = (
                 estaciones_con_ruta * (1440 - minuto_inicio)
             )
-            if numero_slots_fijos == 0:
+            if total_pasajeros > 0 and numero_slots_fijos == 0:
                 raise ValueError(
                     "No hay estaciones abiertas con rutas para generar pasajeros."
                 )
+        self._slots_simulacion_r10 = numero_slots_fijos
 
         generador = random.Random(semilla)
         marcas_evento_transbordo = [-1] * (
@@ -1428,12 +1429,11 @@ class Red:
 
     def medir_rendimiento_r10(self, cantidades, hora_inicio="00:00"):
         """
-        Mide R10 una vez por cada total fijo, sin incluir preparación externa.
+        Mide R10 tres veces por total fijo y devuelve el tiempo promedio.
 
-        Retorna [segundos_base, [[pasajeros, segundos], ...]]. La medición base
-        ejecuta la misma simulación con cero llegadas para estimar el costo fijo.
-        El tiempo monotónico de `time` está permitido para R11; red y horario
-        se mantienen iguales entre muestras para que solo cambie el total.
+        Retorna [segundos_base, [[pasajeros, segundos], ...], E]. La medición base
+        también promedia tres simulaciones con cero llegadas. Se alterna el orden
+        de tamaños entre rondas para reducir sesgos de calentamiento.
         """
         if not isinstance(cantidades, list) or len(cantidades) == 0:
             raise ValueError("Se requiere una lista de tamaños de prueba.")
@@ -1445,29 +1445,52 @@ class Red:
             raise ValueError("La hora de inicio debe tener formato HH:MM.")
 
         self._asegurar_eventos_horario_actualizados()
-        inicio_base = time.perf_counter()
-        self.simular_dia(
-            semilla=42,
-            total_pasajeros=0,
-            hora_inicio=hora_inicio,
-        )
-        segundos_base = time.perf_counter() - inicio_base
-
-        mediciones = []
-        for cantidad in cantidades:
-            inicio = time.perf_counter()
-            resultado = self.simular_dia(
+        repeticiones = 3
+        tiempo_base_total = 0
+        for _ in range(repeticiones):
+            inicio_base = time.perf_counter()
+            self.simular_dia(
                 semilla=42,
-                total_pasajeros=cantidad,
+                total_pasajeros=0,
                 hora_inicio=hora_inicio,
             )
-            segundos = time.perf_counter() - inicio
-            if resultado[0][0] != cantidad:
-                raise RuntimeError(
-                    "La simulación no generó el total exacto solicitado."
+            tiempo_base_total += time.perf_counter() - inicio_base
+        segundos_base = tiempo_base_total / repeticiones
+        numero_slots = self._slots_simulacion_r10
+        mediciones = []
+        for cantidad in cantidades:
+            mediciones.append([cantidad, 0])
+
+        repeticion = 0
+        while repeticion < repeticiones:
+            if repeticion % 2 == 0:
+                indice = 0
+                paso = 1
+                limite = len(cantidades)
+            else:
+                indice = len(cantidades) - 1
+                paso = -1
+                limite = -1
+            while indice != limite:
+                cantidad = cantidades[indice]
+                inicio = time.perf_counter()
+                resultado = self.simular_dia(
+                    semilla=42,
+                    total_pasajeros=cantidad,
+                    hora_inicio=hora_inicio,
                 )
-            mediciones.append([cantidad, segundos])
-        return [segundos_base, mediciones]
+                segundos = time.perf_counter() - inicio
+                if resultado[0][0] != cantidad:
+                    raise RuntimeError(
+                        "La simulación no generó el total exacto solicitado."
+                    )
+                mediciones[indice][1] += segundos
+                indice += paso
+            repeticion += 1
+
+        for medicion in mediciones:
+            medicion[1] /= repeticiones
+        return [segundos_base, mediciones, numero_slots]
 
     def _plan_servicios(self, origen, destino):
         """Helper del prototipo R10 por frecuencia; R5 usa `viaje()`."""

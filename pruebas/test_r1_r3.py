@@ -320,11 +320,12 @@ class RedR1R3Tests(unittest.TestCase):
             self.red.simular_dia(total_pasajeros=1, hora_inicio="23:59")
 
     def test_r11_mide_tamaños_duplicados_y_genera_totales_exactos(self):
-        tiempo_base, mediciones = self.red.medir_rendimiento_r10(
+        tiempo_base, mediciones, slots = self.red.medir_rendimiento_r10(
             [10, 20], hora_inicio="10:00"
         )
 
         self.assertGreater(tiempo_base, 0)
+        self.assertGreater(slots, 0)
         self.assertEqual([fila[0] for fila in mediciones], [10, 20])
         self.assertTrue(all(fila[1] > 0 for fila in mediciones))
         self.assertEqual(self.red.resultado_simulacion()[0][0], 20)

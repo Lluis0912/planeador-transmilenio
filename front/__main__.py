@@ -16,6 +16,7 @@ class PlaneadorApp(tk.Tk):
         carpeta_datos = Path(__file__).resolve().parents[1] / "datos"
         self.red = Red(carpeta_datos)
         self._benchmark_en_curso = False
+        self._ultima_simulacion_r10 = None
 
         self.pestanas = ttk.Notebook(self)
         self.pestanas.pack(fill="both", expand=True, padx=12, pady=12)
@@ -500,9 +501,41 @@ class PlaneadorApp(tk.Tk):
         # enruta y simula pasajeros, buses, colas, esperas y transbordos.
         panel = ttk.Frame(pestañas, padding=10)
         pestañas.add(panel, text="Simulación R10-R11")
+        vistas = ttk.Notebook(panel)
+        vistas.pack(fill="both", expand=True)
+        vista_r10 = ttk.Frame(vistas, padding=8)
+        vista_r11 = ttk.Frame(vistas)
+        vistas.add(vista_r10, text="Simular (R10)")
+        vistas.add(vista_r11, text="Analizar crecimiento (R11)")
+
+        desplazamiento_r11 = tk.Canvas(vista_r11, highlightthickness=0)
+        barra_vertical_r11 = ttk.Scrollbar(
+            vista_r11, orient="vertical", command=desplazamiento_r11.yview
+        )
+        desplazamiento_r11.configure(yscrollcommand=barra_vertical_r11.set)
+        desplazamiento_r11.grid(row=0, column=0, sticky="nsew")
+        barra_vertical_r11.grid(row=0, column=1, sticky="ns")
+        vista_r11.rowconfigure(0, weight=1)
+        vista_r11.columnconfigure(0, weight=1)
+        contenido_r11 = ttk.Frame(desplazamiento_r11, padding=8)
+        ventana_r11 = desplazamiento_r11.create_window(
+            (0, 0), window=contenido_r11, anchor="nw"
+        )
+        contenido_r11.bind(
+            "<Configure>",
+            lambda evento: desplazamiento_r11.configure(
+                scrollregion=desplazamiento_r11.bbox("all")
+            ),
+        )
+        desplazamiento_r11.bind(
+            "<Configure>",
+            lambda evento: desplazamiento_r11.itemconfigure(
+                ventana_r11, width=evento.width
+            ),
+        )
 
         configuracion = ttk.LabelFrame(
-            panel, text="Configuración de demanda hasta medianoche", padding=8
+            vista_r10, text="Configuración de demanda hasta medianoche", padding=8
         )
         configuracion.pack(fill="x")
 
@@ -590,7 +623,48 @@ class PlaneadorApp(tk.Tk):
         for columna in range(5):
             configuracion.columnconfigure(columna, weight=1)
 
-        ejecucion = ttk.LabelFrame(panel, text="Buses y ejecución", padding=8)
+        configuracion_total = ttk.LabelFrame(
+            vista_r10, text="Modo de demanda para esta simulación", padding=8
+        )
+        configuracion_total.pack(fill="x", pady=(8, 0))
+        self.modo_demanda_r10 = tk.StringVar(value="flujo")
+        ttk.Radiobutton(
+            configuracion_total,
+            text="Usar flujos configurados",
+            variable=self.modo_demanda_r10,
+            value="flujo",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(
+            configuracion_total,
+            text="Usar total exacto",
+            variable=self.modo_demanda_r10,
+            value="fijo",
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Label(configuracion_total, text="Pasajeros exactos (N)").grid(
+            row=0, column=2, sticky="e", padx=(12, 4)
+        )
+        self.total_fijo_r10 = tk.StringVar(value="100000")
+        ttk.Entry(configuracion_total, textvariable=self.total_fijo_r10, width=11).grid(
+            row=0, column=3, sticky="w"
+        )
+        ttk.Label(configuracion_total, text="Hora inicio (HH:MM)").grid(
+            row=0, column=4, sticky="e", padx=(12, 4)
+        )
+        self.hora_inicio_r10 = tk.StringVar(value="00:00")
+        ttk.Entry(configuracion_total, textvariable=self.hora_inicio_r10, width=8).grid(
+            row=0, column=5, sticky="w"
+        )
+        ttk.Label(
+            configuracion_total,
+            text=(
+                "El total exacto ignora los flujos y los picos; distribuye N "
+                "hasta medianoche entre estaciones abiertas con rutas."
+            ),
+        ).grid(row=1, column=0, columnspan=6, sticky="w", pady=(5, 0))
+        for columna in range(6):
+            configuracion_total.columnconfigure(columna, weight=1)
+
+        ejecucion = ttk.LabelFrame(vista_r10, text="Buses y ejecución", padding=8)
         ejecucion.pack(fill="x", pady=(8, 0))
         ttk.Label(ejecucion, text="Llegadas y hora de cada bus: horarios.csv").grid(
             row=0, column=0, sticky="w"
@@ -616,82 +690,101 @@ class PlaneadorApp(tk.Tk):
         for columna in range(4):
             ejecucion.columnconfigure(columna, weight=1)
 
-        # R11: compara tiempos con totales duplicados y muestra el Big O de R10.
+        # R11 es una serie de mediciones repetidas de la misma simulación R10.
         r11 = ttk.LabelFrame(
-            panel, text="R11 - Total exacto y crecimiento del tiempo", padding=8
+            contenido_r11,
+            text="Comparar el tiempo al duplicar pasajeros",
+            padding=12,
         )
-        r11.pack(fill="x", pady=(8, 0))
-        self.modo_demanda_r10 = tk.StringVar(value="flujo")
-        ttk.Radiobutton(
+        r11.pack(fill="x")
+        ttk.Label(
             r11,
-            text="Usar flujos configurados",
-            variable=self.modo_demanda_r10,
-            value="flujo",
-        ).grid(row=0, column=0, sticky="w")
-        ttk.Radiobutton(
-            r11,
-            text="Usar total exacto",
-            variable=self.modo_demanda_r10,
-            value="fijo",
-        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
-        ttk.Label(r11, text="Pasajeros exactos").grid(
-            row=0, column=2, sticky="e", padx=(12, 4)
-        )
-        self.total_fijo_r10 = tk.StringVar(value="100000")
-        ttk.Entry(r11, textvariable=self.total_fijo_r10, width=11).grid(
-            row=0, column=3, sticky="w"
-        )
-        ttk.Label(r11, text="Iniciar (HH:MM)").grid(
-            row=0, column=4, sticky="e", padx=(12, 4)
-        )
-        self.hora_inicio_r10 = tk.StringVar(value="00:00")
-        ttk.Entry(r11, textvariable=self.hora_inicio_r10, width=8).grid(
-            row=0, column=5, sticky="w"
-        )
-        ttk.Label(r11, text="Primer N del benchmark").grid(
-            row=1, column=0, sticky="w", pady=(6, 0)
-        )
-        self.inicio_benchmark_r11 = tk.StringVar(value="10000")
-        ttk.Entry(r11, textvariable=self.inicio_benchmark_r11, width=11).grid(
-            row=1, column=1, sticky="w", padx=(8, 0), pady=(6, 0)
-        )
+            text=(
+                "R11 repite la misma simulación R10 con n, 2n, 4n, 8n y 16n. "
+                "n se toma del total generado en tu última simulación R10. "
+                "Cada tamaño se ejecuta 3 veces y se grafica el promedio; "
+                "el benchmark usa total exacto para variar solo el número "
+                "de pasajeros."
+            ),
+            wraplength=950,
+            justify="left",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 10))
         self.boton_benchmark_r11 = ttk.Button(
             r11,
             text="Medir 5 tamaños duplicados",
             command=self._ejecutar_benchmark_r11,
         )
-        self.boton_benchmark_r11.grid(
-            row=1, column=2, columnspan=2, sticky="w", padx=(12, 0), pady=(6, 0)
-        )
+        self.boton_benchmark_r11.grid(row=1, column=0, sticky="w")
         ttk.Label(
             r11,
             text=(
-                "El total fijo ignora flujos y picos. Se asigna a estaciones/minutos "
-                "con ruta; el destino de cada lote sigue siendo aleatorio."
+                "Se mantiene la red, hora de inicio y capacidad del último R10. "
+                "El promedio reduce variaciones del cronómetro."
             ),
-        ).grid(row=2, column=0, columnspan=6, sticky="w", pady=(5, 0))
-        for columna in range(6):
-            r11.columnconfigure(columna, weight=1)
+            wraplength=700,
+            justify="left",
+        ).grid(row=1, column=1, columnspan=2, sticky="w", padx=(12, 0))
+        r11.columnconfigure(0, weight=0)
+        r11.columnconfigure(1, weight=1)
 
         self.resumen_benchmark_r11 = ttk.Label(
-            panel,
+            contenido_r11,
             text=(
-                "Big O total R10: O(1440N + W + B + Q). Q cuenta lotes "
-                "procesados, no personas: se espera crecimiento lineal en lotes "
-                "mientras se activan slots, y posible saturación al llenarlos."
+                "Big O esperado de R10 con la red fija: "
+                "O(S·R + H + 1440·A + V·S + S·(C + D·K) + T·S + W + B + Q)."
             ),
             wraplength=1000,
         )
-        self.resumen_benchmark_r11.pack(anchor="w", pady=(6, 2))
-        self.grafica_benchmark_r11 = tk.Canvas(
-            panel, width=700, height=190, background="white", highlightthickness=1
+        self.resumen_benchmark_r11.pack(
+            anchor="w", fill="x", pady=(10, 4)
         )
-        self.grafica_benchmark_r11.pack(fill="x", pady=(0, 5))
+        ttk.Label(
+            contenido_r11,
+            text=(
+                "R10: O(S·R + H + 1440·A + V·S + S·(C + D·K) + T·S + W + B + Q)\n"
+                "• S·R: preparar colas por estación y servicio.\n"
+                "• H: procesar horarios y eventos.\n"
+                "• 1440·A: preparar salidas por cada minuto y par estación-servicio.\n"
+                "• V·S: índice de viajes por viaje y estación.\n"
+                "• S·(C + D·K): preparar opciones de viaje por origen.\n"
+                "• T·S: revisar minutos por estaciones (hasta 1440×147=211.680).\n"
+                "• W: salidas y conexiones candidatas revisadas.\n"
+                "• B: destinos candidatos comprobados.\n"
+                "• Q: visitas de grupos a colas/manifiestos; aumenta al ocupar "
+                "slots y tiende a frenarse al llenarlos; no es n directamente.\n"
+                "CSV actuales: S=147, R=181, H=140.492, A=1.927, V=13.560. "
+                "Al duplicar n, Q crece hasta E slots; después puede estabilizarse. "
+                "Big O describe tendencia, no una duplicación exacta del tiempo."
+            ),
+            wraplength=1050,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(4, 8))
+        self.mensaje_r11 = ttk.Label(contenido_r11, text="")
+        self.mensaje_r11.pack(anchor="w", pady=(0, 4))
+        contenedor_grafica_r11 = ttk.Frame(contenido_r11)
+        contenedor_grafica_r11.pack(fill="x", pady=(0, 5))
+        self.grafica_benchmark_r11 = tk.Canvas(
+            contenedor_grafica_r11,
+            width=1400,
+            height=230,
+            background="white",
+            highlightthickness=1,
+        )
+        barra_horizontal_r11 = ttk.Scrollbar(
+            contenedor_grafica_r11,
+            orient="horizontal",
+            command=self.grafica_benchmark_r11.xview,
+        )
+        self.grafica_benchmark_r11.configure(
+            xscrollcommand=barra_horizontal_r11.set
+        )
+        self.grafica_benchmark_r11.pack(fill="x", expand=True)
+        barra_horizontal_r11.pack(fill="x")
 
-        self.mensaje_r10 = ttk.Label(panel, text="")
+        self.mensaje_r10 = ttk.Label(vista_r10, text="")
         self.mensaje_r10.pack(anchor="w", pady=(5, 0))
         self.resumen_r10 = ttk.Label(
-            panel, text="Configura demanda y ejecuta la simulación hasta medianoche."
+            vista_r10, text="Configura demanda y ejecuta la simulación hasta medianoche."
         )
         self.resumen_r10.pack(anchor="w", pady=(2, 6))
 
@@ -699,8 +792,10 @@ class PlaneadorApp(tk.Tk):
             "station", "generated", "waiting", "max_queue",
             "avg_wait", "max_wait", "not_boarded", "alighted",
         )
+        contenedor_tabla = ttk.Frame(vista_r10)
+        contenedor_tabla.pack(fill="both", expand=True)
         self.tabla_r10 = ttk.Treeview(
-            panel, columns=columnas, show="headings", height=6
+            contenedor_tabla, columns=columnas, show="headings", height=8
         )
         titulos = (
             ("station", "Estación"),
@@ -716,7 +811,12 @@ class PlaneadorApp(tk.Tk):
             self.tabla_r10.heading(columna, text=titulo)
             self.tabla_r10.column(columna, width=115, anchor="center")
         self.tabla_r10.column("station", width=190, anchor="w")
-        self.tabla_r10.pack(fill="both", expand=True)
+        barra_tabla = ttk.Scrollbar(
+            contenedor_tabla, orient="vertical", command=self.tabla_r10.yview
+        )
+        self.tabla_r10.configure(yscrollcommand=barra_tabla.set)
+        self.tabla_r10.pack(side="left", fill="both", expand=True)
+        barra_tabla.pack(side="right", fill="y")
 
         estaciones = self.red.estaciones()
         if estaciones:
@@ -792,21 +892,28 @@ class PlaneadorApp(tk.Tk):
     def _ejecutar_simulacion_r10(self):
         # R10-R11: el motor aplica el flujo o el total fijo y devuelve métricas.
         try:
+            capacidad = int(self.capacidad_universal_r10.get())
+            hora_inicio = self.hora_inicio_r10.get()
             self.red.configurar_capacidad_universal(
-                int(self.capacidad_universal_r10.get())
+                capacidad
             )
             total_pasajeros = None
             if self.modo_demanda_r10.get() == "fijo":
                 total_pasajeros = int(self.total_fijo_r10.get())
             resultado = self.red.simular_dia(
                 total_pasajeros=total_pasajeros,
-                hora_inicio=self.hora_inicio_r10.get(),
+                hora_inicio=hora_inicio,
             )
         except ValueError as error:
             self.mensaje_r10.configure(text=str(error))
             return
 
         resumen = resultado[0]
+        self._ultima_simulacion_r10 = [
+            resumen[0],
+            capacidad,
+            hora_inicio,
+        ]
         self.resumen_r10.configure(
             text=(
                 "Pasajeros generados: " + str(resumen[0])
@@ -844,15 +951,26 @@ class PlaneadorApp(tk.Tk):
         if self._benchmark_en_curso:
             return
         try:
-            capacidad = int(self.capacidad_universal_r10.get())
-            inicio = int(self.inicio_benchmark_r11.get())
+            resultado_r10 = self.red.resultado_simulacion()
+            if len(resultado_r10) == 0 or self._ultima_simulacion_r10 is None:
+                raise ValueError(
+                    "Primero ejecuta R10; R11 usa su total generado como n."
+                )
+            inicio = self._ultima_simulacion_r10[0]
             if inicio <= 0:
-                raise ValueError("El primer N del benchmark debe ser mayor que cero.")
+                raise ValueError(
+                    "R10 generó 0 pasajeros; configura demanda y vuelve a ejecutarlo."
+                )
+            if resultado_r10[0][0] != inicio:
+                raise ValueError(
+                    "El resultado R10 cambió; vuelve a ejecutar la simulación."
+                )
+            capacidad = self._ultima_simulacion_r10[1]
+            hora_inicio = self._ultima_simulacion_r10[2]
             red_benchmark = deepcopy(self.red)
             red_benchmark.configurar_capacidad_universal(capacidad)
-            hora_inicio = self.hora_inicio_r10.get()
         except ValueError as error:
-            self.mensaje_r10.configure(text=str(error))
+            self.mensaje_r11.configure(text=str(error))
             return
 
         tamaños = []
@@ -862,8 +980,11 @@ class PlaneadorApp(tk.Tk):
             cantidad *= 2
         self._benchmark_en_curso = True
         self.boton_benchmark_r11.configure(state="disabled")
-        self.mensaje_r10.configure(
-            text="Ejecutando el benchmark en una copia de la red..."
+        self.mensaje_r11.configure(
+            text=(
+                "Repitiendo R10 con n=" + str(inicio)
+                + ", 2n, 4n, 8n y 16n; 3 corridas por tamaño..."
+            )
         )
 
         def medir():
@@ -893,7 +1014,9 @@ class PlaneadorApp(tk.Tk):
         self._benchmark_en_curso = False
         self.boton_benchmark_r11.configure(state="normal")
         if mensaje is not None:
-            self.mensaje_r10.configure(text="Benchmark no completado: " + mensaje)
+            self.mensaje_r11.configure(
+                text="Benchmark no completado: " + mensaje
+            )
             return
 
         segundos_base = mediciones[0]
@@ -926,37 +1049,45 @@ class PlaneadorApp(tk.Tk):
                 )
         self.resumen_benchmark_r11.configure(
             text=(
-                "Base sin pasajeros: " + format(segundos_base, ".3f")
-                + " s. Referencia esperada: base + O(n) en lotes con red fija "
-                "(incremento x2 al duplicar N, antes de saturar slots). "
-                "La razón del incremento sobre la base es más útil que la total: "
-                "cerca de x1 sugiere meseta; x2, crecimiento lineal; valores "
-                "crecientes, superlineal. " + texto
+                "Slots disponibles E=" + str(mediciones[2])
+                + ". Base sin pasajeros: " + format(segundos_base, ".3f")
+                + " s (promedio de 3). Las mediciones también promedian 3 "
+                "corridas por tamaño. Compara el incremento sobre la base: "
+                "cerca de x2 al duplicar n sugiere crecimiento lineal de Q "
+                "antes de E; después puede acercarse a x1. " + texto
             )
         )
-        self.mensaje_r10.configure(
-            text="Benchmark R11 completado; la tabla de R10 no fue modificada."
+        self.mensaje_r11.configure(
+            text=(
+                "Completado. Se repitió la misma simulación con varios n; "
+                "el resultado de R10 se conserva en su vista."
+            )
         )
 
     def _dibujar_grafica_r11(self, mediciones):
         lienzo = self.grafica_benchmark_r11
         lienzo.delete("all")
         segundos_base = mediciones[0]
+        numero_slots = mediciones[2]
         mediciones = mediciones[1]
-        ancho = max(lienzo.winfo_width(), 700)
-        alto = max(lienzo.winfo_height(), 190)
+        ancho = max(lienzo.winfo_width(), 1400)
+        alto = max(lienzo.winfo_height(), 230)
+        lienzo.configure(scrollregion=(0, 0, ancho, alto))
         izquierda = 58
         derecha = ancho - 22
         arriba = 24
         abajo = alto - 34
-        primer_n = mediciones[0][0]
-        ultimo_n = mediciones[-1][0]
         maximo_tiempo = mediciones[0][1]
         trabajo_inicial = mediciones[0][1] - segundos_base
         if trabajo_inicial < 0:
             trabajo_inicial = 0
+        slots_iniciales = min(mediciones[0][0], numero_slots)
+        if slots_iniciales <= 0:
+            slots_iniciales = 1
         tiempo_esperado_final = (
-            segundos_base + trabajo_inicial * ultimo_n / primer_n
+            segundos_base + trabajo_inicial
+            * min(mediciones[-1][0], numero_slots)
+            / slots_iniciales
         )
         for medicion in mediciones:
             if medicion[1] > maximo_tiempo:
@@ -981,21 +1112,20 @@ class PlaneadorApp(tk.Tk):
         lienzo.create_text(
             (izquierda + derecha) // 2,
             alto - 10,
-            text="Pasajeros (N)",
+            text="Pasajeros (n; escala log2)",
             fill="#333333",
         )
 
         puntos_observados = []
         puntos_esperados = []
         tiempo_inicial = mediciones[0][1]
-        for medicion in mediciones:
-            if ultimo_n == primer_n:
+        for indice, medicion in enumerate(mediciones):
+            if len(mediciones) == 1:
                 x = (izquierda + derecha) / 2
             else:
                 x = izquierda + (
-                    (medicion[0] - primer_n)
-                    * (derecha - izquierda)
-                    / (ultimo_n - primer_n)
+                    indice * (derecha - izquierda)
+                    / (len(mediciones) - 1)
                 )
             y_observado = abajo - (
                 medicion[1] * (abajo - arriba) / maximo_tiempo
@@ -1004,8 +1134,8 @@ class PlaneadorApp(tk.Tk):
             tiempo_esperado = (
                 segundos_base
                 + max(tiempo_inicial - segundos_base, 0)
-                * medicion[0]
-                / primer_n
+                * min(medicion[0], numero_slots)
+                / slots_iniciales
             )
             y_esperado = abajo - (
                 tiempo_esperado * (abajo - arriba) / maximo_tiempo
@@ -1030,7 +1160,8 @@ class PlaneadorApp(tk.Tk):
             anchor="w", fill="#1769aa",
         )
         lienzo.create_text(
-            izquierda + 105, arriba + 8, text="Esperado: base + lineal en lotes",
+            izquierda + 105, arriba + 8,
+            text="Esperado: lineal hasta E, luego meseta",
             anchor="w", fill="#a16b00",
         )
 
