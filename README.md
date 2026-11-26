@@ -4,7 +4,6 @@ Aplicación de escritorio en Python. `motor/` implementa la lógica y `front/`
 recibe datos y presenta resultados.
 
 ## Ejecutar
-
 Desde la carpeta del proyecto:
 
 ```bash
