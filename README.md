@@ -87,7 +87,7 @@ total fijo para poder comparar tamaños. La base permite distinguir el costo fij
 del trabajo adicional; Big O describe una tendencia, no garantiza que el tiempo
 se duplique exactamente.
 
-## Interfaz y pruebas, Las preubas se usaron principalmente como metodo de verificacion de la IA para que todo funcionara bien, y por nosotros al hacer un cambio grande, y verificar que todo siguiera funcionando
+## Interfaz y pruebas, Las pruebas se usaron principalmente como metodo de verificacion de la IA para que todo funcionara bien, y por nosotros al hacer un cambio grande, y verificar que todo siguiera funcionando
 
 R10 muestra la configuración y los resultados. R11 grafica las mediciones con
 escala log2 o regular. Las pruebas están en `pruebas/` y se ejecutan con:
