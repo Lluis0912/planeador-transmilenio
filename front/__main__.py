@@ -17,6 +17,7 @@ class PlaneadorApp(tk.Tk):
         self.red = Red(carpeta_datos)
         self._benchmark_en_curso = False
         self._ultima_simulacion_r10 = None
+        self._mediciones_benchmark_r11 = None
 
         self.pestanas = ttk.Notebook(self)
         self.pestanas.pack(fill="both", expand=True, padx=12, pady=12)
@@ -768,13 +769,35 @@ class PlaneadorApp(tk.Tk):
                 "Si N>E, algunos slots reciben grupos mayores. R11 hace 3 corridas "
                 "base y 3 por cada tamaño (n a 16n): su orden asintótico es el de "
                 "la corrida mayor, pero el tiempo real suma las 18 ejecuciones. "
-                "Big O describe tendencias, no una duplicación exacta del tiempo."
+                "Big O describe tendencias, no una duplicación exacta. Pequeñas "
+                "variaciones son normales por el costo fijo, el uso del equipo "
+                "y porque 3 corridas no eliminan todo el ruido."
             ),
             wraplength=1050,
             justify="left",
         ).pack(anchor="w", fill="x", pady=(4, 8))
         self.mensaje_r11 = ttk.Label(contenido_r11, text="")
         self.mensaje_r11.pack(anchor="w", pady=(0, 4))
+        controles_escala_r11 = ttk.Frame(contenido_r11)
+        controles_escala_r11.pack(anchor="w", fill="x", pady=(0, 4))
+        ttk.Label(controles_escala_r11, text="Escala del eje X:").pack(
+            side="left"
+        )
+        self.escala_x_r11 = tk.StringVar(value="log2")
+        ttk.Radiobutton(
+            controles_escala_r11,
+            text="Log2",
+            variable=self.escala_x_r11,
+            value="log2",
+            command=self._cambiar_escala_grafica_r11,
+        ).pack(side="left", padx=(8, 0))
+        ttk.Radiobutton(
+            controles_escala_r11,
+            text="Regular",
+            variable=self.escala_x_r11,
+            value="regular",
+            command=self._cambiar_escala_grafica_r11,
+        ).pack(side="left", padx=(8, 0))
         contenedor_grafica_r11 = ttk.Frame(contenido_r11)
         contenedor_grafica_r11.pack(fill="x", pady=(0, 5))
         self.grafica_benchmark_r11 = tk.Canvas(
@@ -1024,6 +1047,10 @@ class PlaneadorApp(tk.Tk):
 
         Thread(target=medir, daemon=True).start()
 
+    def _cambiar_escala_grafica_r11(self):
+        if self._mediciones_benchmark_r11 is not None:
+            self._dibujar_grafica_r11(self._mediciones_benchmark_r11)
+
     def _finalizar_benchmark_r11(self, mediciones=None, mensaje=None):
         self._benchmark_en_curso = False
         self.boton_benchmark_r11.configure(state="normal")
@@ -1035,6 +1062,7 @@ class PlaneadorApp(tk.Tk):
 
         segundos_base = mediciones[0]
         mediciones_puntuales = mediciones[1]
+        self._mediciones_benchmark_r11 = mediciones
         self._dibujar_grafica_r11(mediciones)
         texto = "Mediciones: "
         for indice, medicion in enumerate(mediciones_puntuales):
@@ -1077,6 +1105,25 @@ class PlaneadorApp(tk.Tk):
                 "el resultado de R10 se conserva en su vista."
             )
         )
+
+    @staticmethod
+    def _coordenadas_x_grafica_r11(
+        mediciones, izquierda, derecha, escala
+    ):
+        if len(mediciones) == 1:
+            return [(izquierda + derecha) / 2]
+        if escala == "regular":
+            maximo_pasajeros = mediciones[-1][0]
+            return [
+                izquierda
+                + medicion[0] * (derecha - izquierda) / maximo_pasajeros
+                for medicion in mediciones
+            ]
+        return [
+            izquierda
+            + indice * (derecha - izquierda) / (len(mediciones) - 1)
+            for indice in range(len(mediciones))
+        ]
 
     def _dibujar_grafica_r11(self, mediciones):
         lienzo = self.grafica_benchmark_r11
@@ -1126,21 +1173,22 @@ class PlaneadorApp(tk.Tk):
         lienzo.create_text(
             (izquierda + derecha) // 2,
             alto - 10,
-            text="Pasajeros (n; escala log2)",
+            text=(
+                "Pasajeros (n; escala "
+                + ("regular" if self.escala_x_r11.get() == "regular" else "log2")
+                + ")"
+            ),
             fill="#333333",
         )
 
         puntos_observados = []
         puntos_esperados = []
         tiempo_inicial = mediciones[0][1]
+        coordenadas_x = self._coordenadas_x_grafica_r11(
+            mediciones, izquierda, derecha, self.escala_x_r11.get()
+        )
         for indice, medicion in enumerate(mediciones):
-            if len(mediciones) == 1:
-                x = (izquierda + derecha) / 2
-            else:
-                x = izquierda + (
-                    indice * (derecha - izquierda)
-                    / (len(mediciones) - 1)
-                )
+            x = coordenadas_x[indice]
             y_observado = abajo - (
                 medicion[1] * (abajo - arriba) / maximo_tiempo
             )

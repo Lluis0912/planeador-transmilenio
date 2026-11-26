@@ -160,7 +160,9 @@ destino excluye bajadas de transbordo.
 rango R3, próximo bus R4, plan R5, ranking R6, edición R7, estado R8,
 deshacer/rehacer R9 y simulación R10–R11. R10 presenta configuración y
 resultados; R11 tiene una vista interna independiente para repetir y graficar
-las mediciones sin ocultar la tabla de R10. La vista R11 tiene desplazamiento
+las mediciones sin ocultar la tabla de R10. La gráfica permite cambiar el eje X
+entre escala log2 (predeterminada) y regular; en escala regular las distancias
+son proporcionales al número de pasajeros. La vista R11 tiene desplazamiento
 vertical y la gráfica incluye una barra horizontal para consultar las etiquetas
 X cuando no caben en la ventana. La tabla de R10 también tiene desplazamiento
 vertical. Los callbacks convierten entradas, llaman a `Red` y muestran las
