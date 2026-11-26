@@ -657,9 +657,14 @@ class PlaneadorApp(tk.Tk):
         ttk.Label(
             configuracion_total,
             text=(
-                "El total exacto ignora los flujos y los picos; distribuye N "
-                "hasta medianoche entre estaciones abiertas con rutas."
+                "Total fijo: reparte exactamente N entre los slots estación-minuto "
+                "elegibles hasta medianoche, sin limitar N al cupo de buses. Los "
+                "no abordados siguen en cola al cierre; pueden acumularse por "
+                "demanda alta o llegadas tardías. Con flujo, la demanda depende de "
+                "la tasa y solo se genera si hay salida utilizable en 30 minutos."
             ),
+            wraplength=950,
+            justify="left",
         ).grid(row=1, column=0, columnspan=6, sticky="w", pady=(5, 0))
         for columna in range(6):
             configuracion_total.columnconfigure(columna, weight=1)
@@ -730,7 +735,7 @@ class PlaneadorApp(tk.Tk):
         self.resumen_benchmark_r11 = ttk.Label(
             contenido_r11,
             text=(
-                "Big O esperado de R10 con la red fija: "
+                "Cada medición ejecuta R10, así que tiene su misma complejidad: "
                 "O(S·R + H + 1440·A + V·S + S·(C + D·K) + T·S + W + B + Q)."
             ),
             wraplength=1000,
@@ -748,13 +753,22 @@ class PlaneadorApp(tk.Tk):
                 "• V·S: índice de viajes por viaje y estación.\n"
                 "• S·(C + D·K): preparar opciones de viaje por origen.\n"
                 "• T·S: revisar minutos por estaciones (hasta 1440×147=211.680).\n"
+                "• E (no es un término adicional del Big O): slots estación-minuto "
+                "elegibles = estaciones abiertas con ruta × minutos del intervalo. "
+                "Con 147 estaciones abiertas con ruta y día completo, E=211.680; "
+                "sirve para repartir el total fijo, no representa pasajeros ni "
+                "cupos de bus.\n"
                 "• W: salidas y conexiones candidatas revisadas.\n"
                 "• B: destinos candidatos comprobados.\n"
                 "• Q: visitas de grupos a colas/manifiestos; aumenta al ocupar "
-                "slots y tiende a frenarse al llenarlos; no es n directamente.\n"
+                "slots, pero no equivale directamente a n.\n"
                 "CSV actuales: S=147, R=181, H=140.492, A=1.927, V=13.560. "
-                "Al duplicar n, Q crece hasta E slots; después puede estabilizarse. "
-                "Big O describe tendencia, no una duplicación exacta del tiempo."
+                "Con las 147 estaciones abiertas con ruta, N=100.000 ocupa aprox. "
+                "la mitad de E=211.680 slots; eso no garantiza cupo en los buses. "
+                "Si N>E, algunos slots reciben grupos mayores. R11 hace 3 corridas "
+                "base y 3 por cada tamaño (n a 16n): su orden asintótico es el de "
+                "la corrida mayor, pero el tiempo real suma las 18 ejecuciones. "
+                "Big O describe tendencias, no una duplicación exacta del tiempo."
             ),
             wraplength=1050,
             justify="left",

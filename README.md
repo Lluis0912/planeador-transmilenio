@@ -28,10 +28,14 @@ mayúsculas y espacios externos equivalentes.
 Notación: `N` estaciones, `R` servicios direccionales, `P` máximo de paradas
 por servicio, `H` filas de horarios, `U` estaciones rankeadas, `J` pares
 servicio-parada en los recorridos actuales, `T` minutos simulados, `G` grupos
-de pasajeros, `P_total` pasajeros solicitados, `E` slots abiertos minuto-estación
-y `Q` visitas de grupos a colas/manifiestos. Los costos de comparar cadenas suponen
-longitudes acotadas; si `L` es la longitud del texto, normalizarlo cuesta
-`O(L)`.
+de pasajeros, `P_total` pasajeros solicitados, `E` slots elegibles
+estación-minuto (estaciones abiertas con ruta por minutos del intervalo) y `Q`
+visitas de grupos a colas/manifiestos. `E` es la cantidad de lugares posibles
+para distribuir el total fijo; no es una cantidad de pasajeros ni de buses, ni
+un término adicional de la fórmula Big O. Con las 147 estaciones abiertas con
+ruta y el día completo, `E=1440×147=211.680`. Los costos de comparar cadenas
+suponen longitudes acotadas; si `L` es la longitud del texto, normalizarlo
+cuesta `O(L)`.
 
 | Req. | Función y estructura | Complejidad y motivo |
 |---|---|---|
@@ -75,7 +79,11 @@ solo genera un lote cuando existe una salida programada utilizable dentro de
 tasas y los picos, asigna exactamente `P_total` a los slots con estación abierta
 y ruta topológica, y puede generar espera inicial superior a 30 minutos. En
 ambos modos los destinos se sortean por lote y el abordaje verifica el recorrido
-y los transbordos reales.
+y los transbordos reales. El total fijo no está limitado por la capacidad diaria
+de los buses: puede dejar pasajeros esperando al cierre, sobre todo si la demanda
+es alta o llega tarde. En modo flujo, la cantidad depende de la tasa configurada
+y solo se genera si hay una salida utilizable dentro de 30 minutos. `no_abordados`
+cuenta quienes siguen en cola al terminar el día.
 
 Estructuras y costos:
 
@@ -111,10 +119,12 @@ Estructuras y costos:
   depende de lotes, no de objetos por pasajero.
 - R11 usa como `n` el total que realmente generó la última R10. Si R10 se
   ejecutó por flujo, el benchmark convierte ese conteo en total exacto para
-  poder duplicarlo; conserva red, hora y capacidad. Promedia tres corridas por
-  tamaño y tres corridas base de cero pasajeros. Big O es una tendencia, no
-  predice que el tiempo real se duplique exactamente: hay costo fijo, lotes,
-  capacidad, transferencias y ruido del equipo.
+  poder duplicarlo; conserva red, hora y capacidad. Cada corrida tiene la misma
+  complejidad que R10. R11 hace 3 corridas base sin pasajeros y 3 corridas por
+  cada tamaño (`n`, `2n`, `4n`, `8n`, `16n`): con la red fija, su orden
+  asintótico es el de la corrida mayor, aunque el tiempo real suma las 18
+  ejecuciones. Big O es una tendencia, no predice una duplicación exacta: hay
+  costo fijo, lotes, capacidad, transferencias y ruido del equipo.
 - Con los CSV actuales: `N=147` estaciones, `R=181` servicios, `H=140.492`
   horarios, `A=1.927` pares estación-servicio y `V=13.560` viajes. En un día,
   `T=1440`; por eso `T·N` son hasta `211.680` revisiones estación-minuto.
@@ -126,6 +136,9 @@ Estructuras y costos:
   - `V·N`: indexar viajes por estación.
   - `N·(C + D·K)`: preparar itinerarios posibles desde cada origen.
   - `T·N`: recorrer minutos y estaciones.
+  - `E` (parámetro, no sumando de Big O): slots estación-minuto elegibles donde
+    se distribuye el total fijo; cuando `P_total > E`, algunos slots reciben
+    grupos de más de una persona.
   - `W`: revisar salidas y conexiones posibles.
   - `B`: comprobar destinos candidatos.
   - `Q`: procesar grupos en colas y buses; es el término que cambia con la
