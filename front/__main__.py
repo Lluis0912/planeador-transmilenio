@@ -9,6 +9,7 @@ from motor import Red
 
 class PlaneadorApp(tk.Tk):
     def __init__(self):
+        """Crea los paneles de la aplicación para R1–R11."""
         super().__init__()
         self.title("Planeador TransMilenio")
         self.geometry("1100x850")
@@ -57,8 +58,7 @@ class PlaneadorApp(tk.Tk):
         self.resultado_estado.pack(anchor="w", pady=(4, 12))
 
     def _consultar_estado(self, evento=None):
-        # Conexion R1: el resultado de Red.estado() controla el mensaje.
-        # Toda la decision existe-abierta vive en motor/, no en el front.
+        # R1: Red.estado() decide si la estación existe y está abierta.
         nombre = self.busqueda.get()
         existe, abierta = self.red.estado(nombre)
         if not existe:
@@ -70,8 +70,7 @@ class PlaneadorApp(tk.Tk):
         self.resultado_estado.configure(text=mensaje)
 
     def _actualizar_busqueda(self, evento):
-        # Conexion R2: el texto actual se envia a Red.autocompletar()
-        # como prefijo. El front solo muestra las opciones recibidas.
+        # R2: envía el prefijo al motor y muestra las coincidencias.
         prefijo = self.busqueda.get()
         resultados = self.red.autocompletar(prefijo, 10)
         self.entrada_busqueda.configure(values=resultados)
@@ -80,8 +79,7 @@ class PlaneadorApp(tk.Tk):
             self.entrada_busqueda.event_generate("<Down>")
 
     def _crear_pestana_rango(self, pestañas):
-        # R3: el front captura dos limites y delega todo el recorrido,
-        # el orden y el filtrado de estaciones abiertas a Red.rango().
+        # R3: el motor ordena y filtra el rango solicitado.
         pestaña = ttk.Frame(pestañas, padding=16)
         pestañas.add(pestaña, text="Rango alfabético")
 
@@ -107,16 +105,14 @@ class PlaneadorApp(tk.Tk):
         self.lista_rango.pack(fill="both", expand=True)
 
     def _consultar_rango(self):
-        # El motor decide el orden ascendente o inverso segun los limites.
-        # El front solamente elimina resultados viejos y llena el Listbox.
+        # R3: el motor ordena y filtra; el front muestra la lista recibida.
         resultados = self.red.rango(self.desde.get(), self.hasta.get())
         self.lista_rango.delete(0, tk.END)
         for estacion in resultados:
             self.lista_rango.insert(tk.END, estacion)
 
     def _crear_pestana_proximo(self, pestañas):
-        # R4: el front recoge estacion, bus y hora actual; Red.proximo_bus() hace
-        # toda la conversion y busqueda sobre los horarios.
+        # R4: el motor busca la próxima llegada en los horarios.
         pestaña = ttk.Frame(pestañas, padding=16)
         pestañas.add(pestaña, text="Próximo bus")
 
@@ -154,8 +150,7 @@ class PlaneadorApp(tk.Tk):
         self.resultado_proximo.configure(text=mensaje)
 
     def _crear_pestana_viaje(self, pestañas):
-        # R5: cada segmento recibido tiene [ruta, subida, bajada].
-        # El front solo presenta el plan calculado por Red.viaje().
+        # R5: muestra los segmentos calculados por Red.viaje().
         pestaña = ttk.Frame(pestañas, padding=16)
         pestañas.add(pestaña, text="Planear viaje")
 
@@ -197,8 +192,7 @@ class PlaneadorApp(tk.Tk):
                 indice += 1
 
     def _crear_pestana_ranking(self, pestañas):
-        # R6: el front solicita k nombres al motor; el motor usa el cache
-        # ordenado sin volver a contar todos los horarios.
+        # R6: el motor consulta el ranking cacheado.
         pestaña = ttk.Frame(pestañas, padding=16)
         pestañas.add(pestaña, text="Ranking")
 
@@ -228,8 +222,7 @@ class PlaneadorApp(tk.Tk):
             posicion += 1
 
     def _crear_pestana_operacion(self, pestañas):
-        # R7-R9: botones y atajos llaman las funciones del motor. El front
-        # muestra datos y mensajes, pero las validaciones/historial viven en Red.
+        # R7–R9: el motor valida los cambios y administra el historial.
         self.pestana_operacion = ttk.Frame(pestañas, padding=10)
         pestañas.add(self.pestana_operacion, text="Operar red")
 
@@ -255,6 +248,7 @@ class PlaneadorApp(tk.Tk):
         self._crear_panel_estaciones(self.pestanas_operacion)
 
     def _crear_panel_rutas(self, pestañas):
+        """R7: crea los controles para consultar y editar recorridos."""
         panel = ttk.Frame(pestañas, padding=10)
         pestañas.add(panel, text="Editar recorridos (R7)")
 
@@ -332,6 +326,7 @@ class PlaneadorApp(tk.Tk):
             self._actualizar_servicios_edicion()
 
     def _actualizar_servicios_edicion(self, evento=None):
+        """R7: actualiza los servicios disponibles para el bus elegido."""
         servicios = self.red.servicios(self.bus_edicion.get())
         self.selector_servicio.configure(values=servicios)
         if servicios:
@@ -341,6 +336,7 @@ class PlaneadorApp(tk.Tk):
         self._actualizar_listas_ruta()
 
     def _actualizar_listas_ruta(self):
+        """R7: muestra el recorrido elegido en ambos sentidos."""
         servicio = self.servicio_edicion.get()
         ida = self.red.recorrido(servicio)
         vuelta = self.red.recorrido(servicio, al_reves=True)
@@ -397,6 +393,7 @@ class PlaneadorApp(tk.Tk):
         self._actualizar_listas_ruta()
 
     def _crear_panel_estaciones(self, pestañas):
+        """R8: crea los controles de estado de estaciones."""
         panel = ttk.Frame(pestañas, padding=12)
         pestañas.add(panel, text="Estaciones (R8)")
         ttk.Label(panel, text="Selecciona una estación existente").pack(anchor="w")
@@ -430,6 +427,7 @@ class PlaneadorApp(tk.Tk):
         self._actualizar_estado_operacion()
 
     def _actualizar_estado_operacion(self):
+        """R8: refleja el estado de la estación seleccionada."""
         nombre = self.estacion_operacion.get()
         existe, abierta = self.red.estado(nombre)
         if not existe:
@@ -446,7 +444,7 @@ class PlaneadorApp(tk.Tk):
             self.boton_reabrir.configure(state="normal")
 
     def _cerrar_estacion_ui(self):
-        # R8: cambia el estado; R9 guarda solo el valor anterior como delta.
+        # R8/R9: cambia el estado y registra la acción como delta.
         try:
             self.red.cerrar(self.estacion_operacion.get())
         except ValueError as error:
@@ -455,7 +453,7 @@ class PlaneadorApp(tk.Tk):
         self._actualizar_estado_operacion()
 
     def _reabrir_estacion_ui(self):
-        # R8: reabre la estacion mediante el motor.
+        # R8/R9: reabre la estación mediante el motor.
         try:
             self.red.reabrir(self.estacion_operacion.get())
         except ValueError as error:
@@ -464,7 +462,7 @@ class PlaneadorApp(tk.Tk):
         self._actualizar_estado_operacion()
 
     def _deshacer_cambio(self, evento=None):
-        # R9: delega la pila de deshacer al motor y refresca los paneles.
+        # R9: deshace el último cambio y actualiza los paneles.
         if self.red.deshacer():
             mensaje = "Último cambio deshecho."
         else:
@@ -476,7 +474,7 @@ class PlaneadorApp(tk.Tk):
         return "break"
 
     def _rehacer_cambio(self, evento=None):
-        # R9: delega la pila de rehacer al motor y refresca los paneles.
+        # R9: rehace el último cambio y actualiza los paneles.
         if self.red.rehacer():
             mensaje = "Cambio rehecho."
         else:
@@ -488,18 +486,19 @@ class PlaneadorApp(tk.Tk):
         return "break"
 
     def _atajo_deshacer(self, evento):
+        """R9: envía Ctrl+Z al historial de la pestaña operativa."""
         if self.pestanas.select() == str(self.pestana_operacion):
             return self._deshacer_cambio(evento)
         return None
 
     def _atajo_rehacer(self, evento):
+        """R9: envía Ctrl+Y/Ctrl+Shift+Z al historial."""
         if self.pestanas.select() == str(self.pestana_operacion):
             return self._rehacer_cambio(evento)
         return None
 
     def _crear_pestana_simulacion(self, pestañas):
-        # R10: formularios de demanda/capacidad y resultados; el motor genera,
-        # enruta y simula pasajeros, buses, colas, esperas y transbordos.
+        # R10/R11: configura la simulación y compara sus tiempos.
         panel = ttk.Frame(pestañas, padding=10)
         pestañas.add(panel, text="Simulación R10-R11")
         vistas = ttk.Notebook(panel)
@@ -696,7 +695,7 @@ class PlaneadorApp(tk.Tk):
         for columna in range(4):
             ejecucion.columnconfigure(columna, weight=1)
 
-        # R11 es una serie de mediciones repetidas de la misma simulación R10.
+        # R11: compara tiempos de R10 con distintos totales de pasajeros.
         r11 = ttk.LabelFrame(
             contenido_r11,
             text="Comparar el tiempo al duplicar pasajeros",
@@ -860,6 +859,7 @@ class PlaneadorApp(tk.Tk):
             self.origen_local_r10.set(estaciones[0])
 
     def _configurar_demanda_global(self):
+        """R10: lee y aplica el flujo global."""
         try:
             flujo = int(self.flujo_global_r10.get())
             self.red.aplicar_flujo_global_a_estaciones(flujo)
@@ -871,6 +871,7 @@ class PlaneadorApp(tk.Tk):
         )
 
     def _configurar_demanda_local(self):
+        """R10: lee y aplica el flujo de una estación."""
         try:
             texto_flujo = self.flujo_local_r10.get().strip()
             flujo = int(texto_flujo) if texto_flujo != "" else None
@@ -886,6 +887,7 @@ class PlaneadorApp(tk.Tk):
         )
 
     def _quitar_demanda_local(self):
+        """R10: restaura el flujo global para la estación."""
         if self.red.quitar_demanda_estacion(self.origen_local_r10.get()):
             mensaje = "La estación vuelve a usar el flujo global."
         else:
@@ -893,6 +895,7 @@ class PlaneadorApp(tk.Tk):
         self.mensaje_r10.configure(text=mensaje)
 
     def _agregar_pico_r10(self):
+        """R10: valida y agrega un periodo pico."""
         try:
             extra = int(self.pico_extra_r10.get())
             self.red.agregar_hora_pico(
@@ -911,11 +914,13 @@ class PlaneadorApp(tk.Tk):
         self.mensaje_r10.configure(text="Periodo pico agregado.")
 
     def _limpiar_picos_r10(self):
+        """R10: quita los periodos pico del motor y de la lista."""
         self.red.limpiar_horas_pico()
         self.lista_picos_r10.delete(0, tk.END)
         self.mensaje_r10.configure(text="Se eliminaron todos los periodos pico.")
 
     def _configurar_capacidad_r10(self):
+        """R10: valida y aplica la capacidad común de los buses."""
         try:
             capacidad = int(self.capacidad_universal_r10.get())
             self.red.configurar_capacidad_universal(capacidad)
@@ -927,7 +932,7 @@ class PlaneadorApp(tk.Tk):
         )
 
     def _ejecutar_simulacion_r10(self):
-        # R10-R11: el motor aplica el flujo o el total fijo y devuelve métricas.
+        # R10: el motor ejecuta la demanda elegida y devuelve las métricas.
         try:
             capacidad = int(self.capacidad_universal_r10.get())
             hora_inicio = self.hora_inicio_r10.get()
@@ -985,6 +990,7 @@ class PlaneadorApp(tk.Tk):
         )
 
     def _ejecutar_benchmark_r11(self):
+        """R11: prepara y lanza las mediciones de R10."""
         if self._benchmark_en_curso:
             return
         try:
@@ -1025,6 +1031,7 @@ class PlaneadorApp(tk.Tk):
         )
 
         def medir():
+            # R11: las corridas se ejecutan sin bloquear la interfaz.
             try:
                 mediciones = red_benchmark.medir_rendimiento_r10(
                     tamaños, hora_inicio
@@ -1048,10 +1055,12 @@ class PlaneadorApp(tk.Tk):
         Thread(target=medir, daemon=True).start()
 
     def _cambiar_escala_grafica_r11(self):
+        """R11: redibuja las mismas mediciones en la escala elegida."""
         if self._mediciones_benchmark_r11 is not None:
             self._dibujar_grafica_r11(self._mediciones_benchmark_r11)
 
     def _finalizar_benchmark_r11(self, mediciones=None, mensaje=None):
+        """R11: muestra resultados y actualiza la gráfica."""
         self._benchmark_en_curso = False
         self.boton_benchmark_r11.configure(state="normal")
         if mensaje is not None:
@@ -1110,6 +1119,7 @@ class PlaneadorApp(tk.Tk):
     def _coordenadas_x_grafica_r11(
         mediciones, izquierda, derecha, escala
     ):
+        """R11: calcula posiciones X en escala log2 o regular."""
         if len(mediciones) == 1:
             return [(izquierda + derecha) / 2]
         if escala == "regular":
@@ -1126,6 +1136,7 @@ class PlaneadorApp(tk.Tk):
         ]
 
     def _dibujar_grafica_r11(self, mediciones):
+        """R11: dibuja tiempos medidos y la tendencia esperada."""
         lienzo = self.grafica_benchmark_r11
         lienzo.delete("all")
         segundos_base = mediciones[0]
@@ -1229,6 +1240,7 @@ class PlaneadorApp(tk.Tk):
 
 
 def main():
+    """Inicia la interfaz de escritorio."""
     app = PlaneadorApp()
     app.mainloop()
 

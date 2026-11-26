@@ -5,20 +5,10 @@ import time
 
 def simular_fila(llegadas, frecuencia, capacidad):
     """
-    R10: simula una fila FIFO durante el periodo indicado por `llegadas`.
+    R10: simula una cola FIFO usando grupos de llegadas.
 
-    Cada posicion de llegadas representa pasajeros que llegan en ese minuto.
-    Un bus aparece en el minuto 0 y luego cada `frecuencia` minutos; lleva
-    hasta `capacidad` personas. Devuelve:
-    [abordados, espera_promedio, espera_maxima, cola_maxima, no_abordados].
-
-    Los tiempos son minutos y la espera promedio se pondera por pasajero.
-    Los que siguen esperando al terminar cuentan como no_abordados, y su
-    espera hasta el fin del periodo se incluye en las métricas.
-
-    Complejidad: O(t + p), donde t es la duración en minutos y p los
-    pasajeros en cola. Los grupos con el mismo minuto se almacenan juntos
-    para evitar crear un objeto por pasajero.
+    Devuelve abordados, espera promedio y máxima, cola máxima y no abordados.
+    Cuesta O(T + G): recorre los minutos y los grupos, no cada pasajero.
     """
     if frecuencia <= 0 or capacidad <= 0:
         raise ValueError("La frecuencia y la capacidad deben ser mayores que cero.")
@@ -87,22 +77,14 @@ def simular_fila(llegadas, frecuencia, capacidad):
 
 class Red:
     """
-    Red en memoria de las estaciones disponibles.
+    Datos y operaciones del motor R1–R11.
 
-    Estructura principal: dos listas paralelas ordenadas alfabéticamente.
-    - _estaciones guarda los nombres sin repetir.
-    - _abiertas guarda el estado correspondiente a cada nombre.
-
-    Mantener las listas ordenadas permite buscar estaciones con búsqueda binaria.
-    Es mas eficiente que recorrer todas las estaciones para cada consulta:
-    O(log n) para buscar, frente a O(n) para una busqueda lineal.
-
-    Las listas son una estructura permitida por las reglas del proyecto.
-    La clase no usa diccionarios ni conjuntos dentro de motor/.
+    `_estaciones` y `_abiertas` son listas paralelas; las demás listas guardan
+    rutas, horarios, cachés, historial y resultados de cada requisito.
     """
     def __init__(self, carpeta):
-        # Complejidad: O(n log n), por ordenar n nombres con merge sort,
-        # mas O(n) para leer y consolidar el archivo.
+        """Carga las listas base compartidas por R1–R11."""
+        # R1: ordena y consolida estaciones para las búsquedas posteriores.
         ruta_archivo = str(carpeta).rstrip("/\\") + "/estaciones.csv"
         estaciones = []
 
@@ -135,7 +117,7 @@ class Red:
                 self._estaciones.append(estacion[0])
                 self._abiertas.append(estacion[1])
 
-        # R4-R6 cargan las otras dos tablas permitidas por el proyecto.
+        # R4–R11 comparten las tablas de rutas y horarios.
         base = str(carpeta).rstrip("/\\")
         self._rutas_info = self._cargar_rutas(base + "/rutas.csv")
         self._horarios = self._cargar_horarios(base + "/horarios.csv")
@@ -155,17 +137,16 @@ class Red:
         self._eventos_horario_desactualizados = False
 
     def configurar_demanda_global(self, pasajeros_por_minuto):
-        """Configura la tasa base que genera demanda en todas las estaciones."""
+        """R10: establece el flujo base de pasajeros por estación y minuto."""
         self._validar_cantidad(pasajeros_por_minuto, "El flujo")
         self._flujo_global = pasajeros_por_minuto
         self._resultado_r10 = []
 
     def aplicar_flujo_global_a_estaciones(self, pasajeros_por_minuto):
         """
-        Aplica la tasa global a todas las estaciones y limpia tasas locales.
+        R10: aplica el flujo global y elimina las tasas locales.
 
-        Recorre S configuraciones de estación: O(S) tiempo y O(1) espacio
-        adicional. Los destinos se eligen aleatoriamente por lote al simular.
+        Recorre las configuraciones locales en O(S).
         """
         self.configurar_demanda_global(pasajeros_por_minuto)
         for configuracion in self._flujos_estaciones:
@@ -173,9 +154,7 @@ class Red:
 
     def configurar_demanda_estacion(self, estacion, pasajeros_por_minuto=None):
         """
-        Configura el flujo local de una estación, sin fijar destinos.
-
-        Si no se entrega tasa local, la estación usa el flujo global.
+        R10: establece o quita el flujo local de una estación.
         """
         if pasajeros_por_minuto is not None:
             self._validar_cantidad(pasajeros_por_minuto, "El flujo")
@@ -195,7 +174,7 @@ class Red:
         self._resultado_r10 = []
 
     def quitar_demanda_estacion(self, estacion):
-        """Quita la tasa local para volver a usar el flujo global."""
+        """R10: quita el flujo local y vuelve a usar el global."""
         origen_normalizado = self._normalizar(estacion)
         posicion = 0
         while posicion < len(self._flujos_estaciones):
@@ -207,7 +186,7 @@ class Red:
         return False
 
     def configurar_capacidad_universal(self, capacidad):
-        """Asigna una única capacidad para todos los buses en O(1)."""
+        """R10: establece la capacidad común de los buses en O(1)."""
         self._validar_cantidad(capacidad, "La capacidad")
         if capacidad == 0:
             raise ValueError("La capacidad debe ser mayor que cero.")
@@ -216,11 +195,9 @@ class Red:
 
     def agregar_hora_pico(self, desde, hasta, pasajeros_extra):
         """
-        Añade demanda por minuto a todas las estaciones abiertas en un intervalo.
+        R10: agrega pasajeros por minuto dentro del intervalo indicado.
 
-        Acepta HH:MM; si `hasta` es menor que `desde`, el intervalo cruza
-        medianoche. En el caso habitual [14:00, 17:00), incluye las 14:00 y no
-        incluye las 17:00.
+        El inicio se incluye y el final se excluye; admite cruzar medianoche.
         """
         self._validar_cantidad(pasajeros_extra, "El incremento")
         minuto_desde = self._convertir_hora(desde)
@@ -231,21 +208,16 @@ class Red:
         self._resultado_r10 = []
 
     def limpiar_horas_pico(self):
-        """Quita todos los incrementos de demanda personalizados."""
+        """R10: elimina los incrementos de demanda por hora pico."""
         self._horas_pico = []
         self._resultado_r10 = []
 
     def _construir_eventos_horario(self):
         """
-        Agrupa las llegadas programadas por servicio, parada y viaje indexado.
+        R10: construye eventos de viaje a partir de los horarios.
 
-        Los CSV no tienen identificador de vehículo; por ello, el evento numero
-        i de cada parada de un servicio se asocia al viaje i. Es una
-        aproximación de los datos disponibles, y se documenta en README.
-
-        Si H son las filas de horario y P el máximo de paradas de un servicio,
-        ubicar estaciones cuesta O(H*P) y ordenar los eventos O(H log H).
-        Las listas agrupadas requieren O(H) espacio.
+        Como el CSV no identifica vehículos, alinea las filas de cada parada
+        por posición. Cuesta O(H·P + H log N + H log H) y usa O(H + P) espacio.
         """
         eventos = []
         viajes = []
@@ -310,11 +282,11 @@ class Red:
         return self._ordenar_eventos_horario(eventos), viajes
 
     def _invalidar_eventos_horario(self):
-        """Marca el índice R10 para reconstruirlo tras cambios R7."""
+        """R7/R9: marca el índice de horarios R10 para reconstruirlo."""
         self._eventos_horario_desactualizados = True
 
     def _asegurar_eventos_horario_actualizados(self):
-        """Reconstruye una sola vez el índice R10 cuando cambian recorridos."""
+        """R10/R11: reconstruye el índice si R7/R9 cambiaron un recorrido."""
         if self._eventos_horario_desactualizados:
             self._eventos_horario, self._viajes_horario = (
                 self._construir_eventos_horario()
@@ -323,7 +295,7 @@ class Red:
 
     @classmethod
     def _ordenar_eventos_horario(cls, eventos):
-        """Ordena llegadas por minuto con merge sort: O(H log H), espacio O(H)."""
+        """R10: ordena eventos por hora con merge sort, O(H log H)."""
         if len(eventos) < 2:
             return eventos
 
@@ -358,311 +330,10 @@ class Red:
             j += 1
         return resultado
 
-    def _simular_dia_por_frecuencia(self, frecuencia):
-        """
-        Prototipo privado anterior de R10; no lo usa el frontend.
-
-        La simulación activa con destinos aleatorios y horarios reales es
-        `simular_dia()`, más abajo. No es parte del contrato de la interfaz;
-        solo documenta el modelo inicial basado en frecuencia.
-
-        Demanda: una tasa global y un destino, con excepciones por estación;
-        los incrementos horarios se suman a la tasa aplicable. Servicio:
-        recorridos direccionales de rutas.csv, un bus por servicio cada
-        `frecuencia` minutos, capacidad global o sobrescrita por bus.
-        Al transferir, cada pasajero vuelve a la cola FIFO de la estación.
-
-        Retorna [resumen, estaciones]. El resumen es
-        [generados, abordajes, no_abordados, espera_promedio, espera_maxima,
-        cola_maxima, pasajeros_en_red_al_final]. Cada fila por estación es
-        [nombre, generados, esperando_al_final, cola_maxima, espera_promedio,
-        espera_maxima, no_abordados].
-
-        Complejidad: O(M*R^2*P^2 + D*(N + A + E + Q)), donde M es la cantidad
-        de estaciones con flujo, R servicios direccionales, P paradas máximas,
-        D=1440 minutos, N estaciones, A buses activos por minuto, E eventos de
-        parada y Q grupos FIFO revisados. Se guardan grupos equivalentes, no
-        objetos individuales; espacio O(N + E + G), G grupos diarios.
-        """
-        self._validar_cantidad(frecuencia, "La frecuencia")
-        if frecuencia == 0:
-            raise ValueError("La frecuencia debe ser mayor que cero.")
-
-        colas = []
-        metricas = []
-        demandas = []
-        for estacion in self._estaciones:
-            colas.append([])
-            metricas.append([0, 0, 0, 0, 0, 0])
-
-        indice_estacion = 0
-        while indice_estacion < len(self._estaciones):
-            estacion = self._estaciones[indice_estacion]
-            config = self._buscar_flujo_estacion(estacion)
-            if config == -1:
-                flujo = self._flujo_global
-                destino = ""
-            else:
-                flujo = self._flujos_estaciones[config][1]
-                destino = ""
-            plan = []
-            if destino != "":
-                if flujo > 0 or len(self._horas_pico) > 0:
-                    plan = self._plan_servicios(estacion, destino)
-            demandas.append([flujo, destino, plan])
-            indice_estacion += 1
-
-        buses_activos = []
-        total_generados = 0
-        total_abordajes = 0
-        total_completados = 0
-        espera_total = 0
-        espera_maxima = 0
-        cola_maxima_red = 0
-
-        minuto = 0
-        while minuto < 1440:
-            indice_estacion = 0
-            while indice_estacion < len(self._estaciones):
-                estacion = self._estaciones[indice_estacion]
-                if self._abiertas[indice_estacion]:
-                    demanda = demandas[indice_estacion]
-                    flujo = demanda[0]
-                    destino = demanda[1]
-                    flujo_minuto = flujo + self._incremento_hora(minuto)
-                    if destino != estacion and flujo_minuto > 0:
-                        total_generados += flujo_minuto
-                        metricas[indice_estacion][0] += flujo_minuto
-                        plan = demanda[2]
-                        if len(plan) > 0:
-                            primer_tramo = plan[0]
-                            servicio_siguiente = ""
-                            if len(plan) > 1:
-                                servicio_siguiente = plan[1][0]
-                            cola = colas[indice_estacion]
-                            cola.append(
-                                [
-                                    minuto,
-                                    destino,
-                                    primer_tramo[0],
-                                    primer_tramo[1],
-                                    servicio_siguiente,
-                                    flujo_minuto,
-                                ]
-                            )
-                            total_esperando = self._contar_cola(cola)
-                            if total_esperando > metricas[indice_estacion][1]:
-                                metricas[indice_estacion][1] = total_esperando
-                            if total_esperando > cola_maxima_red:
-                                cola_maxima_red = total_esperando
-                        else:
-                            cola = colas[indice_estacion]
-                            cola.append(
-                                [
-                                    minuto,
-                                    destino,
-                                    "",
-                                    destino,
-                                    "",
-                                    flujo_minuto,
-                                ]
-                            )
-                            total_esperando = self._contar_cola(cola)
-                            if total_esperando > metricas[indice_estacion][1]:
-                                metricas[indice_estacion][1] = total_esperando
-                            if total_esperando > cola_maxima_red:
-                                cola_maxima_red = total_esperando
-                indice_estacion += 1
-
-            if minuto % frecuencia == 0:
-                indice_ruta = 0
-                while indice_ruta < len(self._rutas_info):
-                    capacidad = self._capacidad_universal
-                    if len(self._rutas_info[indice_ruta][1]) > 0:
-                        buses_activos.append(
-                            [
-                                indice_ruta,
-                                0,
-                                minuto,
-                                [],
-                                0,
-                                capacidad,
-                            ]
-                        )
-                    indice_ruta += 1
-
-            buses_pendientes = []
-            for bus_activo in buses_activos:
-                indice_ruta = bus_activo[0]
-                identificador = self._rutas_info[indice_ruta][0]
-                indice_parada = bus_activo[1]
-                llegada = bus_activo[2]
-                pasajeros_bus = bus_activo[3]
-                ocupacion = bus_activo[4]
-                capacidad = bus_activo[5]
-
-                if llegada != minuto:
-                    buses_pendientes.append(bus_activo)
-                    continue
-
-                paradas = self._rutas_info[indice_ruta][1]
-                estacion_bus = paradas[indice_parada]
-                indice_actual = self._posicion_estacion(estacion_bus)
-                pasajeros_restantes = []
-                for pasajero in pasajeros_bus:
-                    if pasajero[2] == estacion_bus:
-                        ocupacion -= pasajero[4]
-                        if pasajero[3] != "":
-                            indice_transbordo = self._posicion_estacion(estacion_bus)
-                            if indice_transbordo != -1:
-                                colas[indice_transbordo].append(
-                                    [
-                                        minuto,
-                                        pasajero[1],
-                                        pasajero[3],
-                                        pasajero[1],
-                                        "",
-                                        pasajero[4],
-                                    ]
-                                )
-                                cola_actual = self._contar_cola(
-                                    colas[indice_transbordo]
-                                )
-                                if cola_actual > metricas[indice_transbordo][1]:
-                                    metricas[indice_transbordo][1] = cola_actual
-                                if cola_actual > cola_maxima_red:
-                                    cola_maxima_red = cola_actual
-                        else:
-                            total_completados += pasajero[4]
-                    else:
-                        pasajeros_restantes.append(pasajero)
-                pasajeros_bus = pasajeros_restantes
-
-                if indice_actual != -1 and self._abiertas[indice_actual]:
-                    cola = colas[indice_actual]
-                    nueva_cola = []
-                    for pasajero in cola:
-                        if (
-                            pasajero[2] == identificador
-                            and pasajero[3] != estacion_bus
-                            and ocupacion < capacidad
-                        ):
-                            cupo = capacidad - ocupacion
-                            abordados = pasajero[5]
-                            if abordados > cupo:
-                                abordados = cupo
-                            espera = minuto - pasajero[0]
-                            espera_total += espera * abordados
-                            total_abordajes += abordados
-                            metricas[indice_actual][2] += espera * abordados
-                            metricas[indice_actual][3] += abordados
-                            if espera > espera_maxima:
-                                espera_maxima = espera
-                            if espera > metricas[indice_actual][4]:
-                                metricas[indice_actual][4] = espera
-                            ocupacion += abordados
-                            pasajeros_bus.append(
-                                [
-                                    minuto,
-                                    pasajero[1],
-                                    pasajero[3],
-                                    pasajero[4],
-                                    abordados,
-                                ]
-                            )
-                            pasajero[5] -= abordados
-                        if pasajero[5] > 0:
-                            nueva_cola.append(pasajero)
-                    colas[indice_actual] = nueva_cola
-
-                bus_activo[3] = pasajeros_bus
-                bus_activo[4] = ocupacion
-                bus_activo[1] += 1
-                if bus_activo[1] < len(paradas):
-                    bus_activo[2] = minuto + 3
-                    buses_pendientes.append(bus_activo)
-
-            buses_activos = buses_pendientes
-            minuto += 1
-
-        total_no_abordados = 0
-        maximo_espera_red_final = espera_maxima
-        suma_esperas_metricas = espera_total
-        cantidad_esperas_metricas = total_abordajes
-        indice_estacion = 0
-        while indice_estacion < len(colas):
-            cola = colas[indice_estacion]
-            metricas_estacion = metricas[indice_estacion]
-            esperando = 0
-            for pasajero in cola:
-                cantidad = pasajero[5]
-                esperando += cantidad
-                total_no_abordados += cantidad
-                espera = 1439 - pasajero[0]
-                suma_esperas_metricas += espera * cantidad
-                cantidad_esperas_metricas += cantidad
-                if espera > maximo_espera_red_final:
-                    maximo_espera_red_final = espera
-                if espera > metricas_estacion[4]:
-                    metricas_estacion[4] = espera
-                metricas_estacion[2] += espera * cantidad
-                metricas_estacion[3] += cantidad
-
-            metricas_estacion[5] = esperando
-            indice_estacion += 1
-
-        pasajeros_a_bordo = 0
-        for bus_activo in buses_activos:
-            for pasajero in bus_activo[3]:
-                pasajeros_a_bordo += pasajero[4]
-
-        if cantidad_esperas_metricas > 0:
-            promedio_red = (
-                suma_esperas_metricas / cantidad_esperas_metricas
-            )
-        else:
-            promedio_red = 0
-        pasajeros_en_red = total_generados - total_completados
-        if pasajeros_en_red < total_no_abordados + pasajeros_a_bordo:
-            pasajeros_en_red = total_no_abordados + pasajeros_a_bordo
-
-        resumen = [
-            total_generados,
-            total_abordajes,
-            total_no_abordados,
-            promedio_red,
-            maximo_espera_red_final,
-            cola_maxima_red,
-            pasajeros_en_red,
-        ]
-        filas_estaciones = []
-        indice_estacion = 0
-        while indice_estacion < len(self._estaciones):
-            metricas_estacion = metricas[indice_estacion]
-            if metricas_estacion[3] > 0:
-                promedio = metricas_estacion[2] / metricas_estacion[3]
-            else:
-                promedio = 0
-            filas_estaciones.append(
-                [
-                    self._estaciones[indice_estacion],
-                    metricas_estacion[0],
-                    metricas_estacion[5],
-                    metricas_estacion[1],
-                    promedio,
-                    metricas_estacion[4],
-                    metricas_estacion[5],
-                ]
-            )
-            indice_estacion += 1
-
-        self._resultado_r10 = [resumen, filas_estaciones]
-        return self._resultado_r10
-
     def _guardar_itinerario(
         self, destinos, indice_destino, servicio, parada, siguiente, pasos
     ):
-        """Conserva para cada destino el recorrido conocido con menos paradas."""
+        """R10: conserva el itinerario con menos paradas para un destino."""
         if not self._abiertas[indice_destino]:
             return
         actual = destinos[indice_destino]
@@ -679,11 +350,7 @@ class Red:
         self, indice_origen, servicios_por_estacion, destinos
     ):
         """
-        Precalcula destinos alcanzables directos o con un transbordo.
-
-        Indexar los recorridos por estación evita volver a escanear todas las
-        rutas al asignar cada lote aleatorio. El coste es proporcional a las
-        combinaciones de tramos válidas examinadas para este origen.
+        R10: prepara destinos directos o con un transbordo para un origen.
         """
         for servicio_a, inicio_a in servicios_por_estacion[indice_origen]:
             paradas_a = self._rutas_info[servicio_a][1]
@@ -726,7 +393,7 @@ class Red:
 
     @staticmethod
     def _primera_salida_desde(salidas, minuto):
-        """Busca la primera salida en o después del minuto con búsqueda binaria."""
+        """R10: busca con binaria la primera salida desde ese minuto."""
         izquierda = 0
         derecha = len(salidas)
         while izquierda < derecha:
@@ -747,14 +414,7 @@ class Red:
         eventos_viaje,
         mascara_posterior,
     ):
-        """
-        Filtra rutas conocidas por salidas reales dentro de la ventana.
-
-        Los itinerarios topológicos se agrupan por servicio y transbordo una
-        vez por origen. Aquí se comprueban las salidas programadas del grupo y
-        sus máscaras de paradas posteriores, sin reconstruir combinaciones de
-        rutas para cada destino en cada minuto.
-        """
+        """R10: filtra itinerarios por salidas reales dentro de 30 minutos."""
         ventana_maxima_espera = 30
         destinos = []
         limite_salida = minuto + ventana_maxima_espera
@@ -838,35 +498,11 @@ class Red:
         self, semilla=None, total_pasajeros=None, hora_inicio="00:00"
     ):
         """
-        Simula desde hora_inicio hasta medianoche con horarios reales.
+        R10: simula hasta medianoche con horarios y colas FIFO de grupos.
 
-        Cada viaje se crea a partir de las secuencias de horarios por parada.
-        Las colas se guardan como matriz estación x servicio; cada celda es una
-        lista FIFO de lotes. En cada llegada se recorre y reconstruye esa cola
-        conservando, en orden, los grupos que no puede abordar ese bus.
-        El evento de horario identifica minuto, viaje, estación y orden de parada.
-
-        En modo de flujo, cada lote elige un destino alcanzable con una salida
-        dentro de 30 minutos y se conservan las tasas globales/locales y picos.
-        Con total_pasajeros, elige entre destinos topológicamente alcanzables y
-        distribuye exactamente N entre pares minuto-estación abiertos con ruta.
-        Este modo ignora flujos y picos; los horarios se validan al abordar y la
-        espera inicial puede superar 30 minutos.
-
-        Retorna [resumen, estaciones]. El resumen termina con pasajeros_en_red
-        y llegadas a destino; cada fila de estación termina con su total de
-        llegadas a destino, sin contar transbordos.
-
-        La semilla opcional permite repetir una simulación para pruebas.
-        Para N fijo, el conteo de estaciones abiertas con ruta cuesta O(N).
-        Si E es el número de slots minuto-estación disponibles, la distribución
-        uniforme ocupa O(E) tiempo como máximo.
-        Los índices de salidas por minuto cuestan O(1440*S + H), donde S es
-        el número de pares estación-servicio con horarios y H los eventos.
-        La simulación cuesta O(1440*N + W + B + Q): W cuenta las salidas
-        examinadas por itinerario, B los destinos validados con máscaras y Q
-        los grupos de pasajeros procesados. Espacio O(H + V*N + N*R +
-        1440*S + D + G), con V viajes, D opciones de destino y G grupos.
+        Acepta flujo configurado o un total fijo. Cuesta
+        O(NR + H + 1440A + VN + N(C + DK) + TN + W + B + Q) y usa
+        O(H + VN + NR + 1440A + ND + G) espacio.
         """
         minuto_inicio = self._convertir_hora(hora_inicio)
         if minuto_inicio is None:
@@ -1410,7 +1046,7 @@ class Red:
         return self._resultado_r10
 
     def resultado_simulacion(self):
-        """Devuelve una copia superficial de los resultados R10 para el front."""
+        """R10: devuelve una copia del resultado para mostrar en el front."""
         resultado = []
         if len(self._resultado_r10) == 0:
             return resultado
@@ -1429,11 +1065,9 @@ class Red:
 
     def medir_rendimiento_r10(self, cantidades, hora_inicio="00:00"):
         """
-        Mide R10 tres veces por total fijo y devuelve el tiempo promedio.
+        R11: mide R10 tres veces por tamaño y devuelve los promedios.
 
-        Retorna [segundos_base, [[pasajeros, segundos], ...], E]. La medición base
-        también promedia tres simulaciones con cero llegadas. Se alterna el orden
-        de tamaños entre rondas para reducir sesgos de calentamiento.
+        Retorna tiempo base, mediciones por tamaño y E.
         """
         if not isinstance(cantidades, list) or len(cantidades) == 0:
             raise ValueError("Se requiere una lista de tamaños de prueba.")
@@ -1492,90 +1126,8 @@ class Red:
             medicion[1] /= repeticiones
         return [segundos_base, mediciones, numero_slots]
 
-    def _plan_servicios(self, origen, destino):
-        """Helper del prototipo R10 por frecuencia; R5 usa `viaje()`."""
-        if origen == destino:
-            return []
-        posicion_origen = self._posicion_estacion(origen)
-        posicion_destino = self._posicion_estacion(destino)
-        if posicion_origen == -1 or posicion_destino == -1:
-            return []
-        if not self._abiertas[posicion_origen] or not self._abiertas[posicion_destino]:
-            return []
-
-        mejor = []
-        mejor_cantidad = -1
-        for servicio_a in self._rutas_info:
-            paradas_a = servicio_a[1]
-            inicio_a = self._buscar_en_lista(paradas_a, origen)
-            fin_directo = self._buscar_en_lista(paradas_a, destino)
-            if inicio_a != -1 and fin_directo > inicio_a:
-                cantidad = fin_directo - inicio_a
-                if mejor_cantidad == -1 or cantidad < mejor_cantidad:
-                    mejor_cantidad = cantidad
-                    mejor = [[servicio_a[0], destino]]
-
-        indice_a = 0
-        while indice_a < len(self._rutas_info):
-            servicio_a = self._rutas_info[indice_a]
-            paradas_a = servicio_a[1]
-            inicio_a = self._buscar_en_lista(paradas_a, origen)
-            if inicio_a != -1:
-                indice_b = 0
-                while indice_b < len(self._rutas_info):
-                    if indice_b != indice_a:
-                        servicio_b = self._rutas_info[indice_b]
-                        paradas_b = servicio_b[1]
-                        fin_b = self._buscar_en_lista(paradas_b, destino)
-                        if fin_b != -1:
-                            indice_parada = inicio_a + 1
-                            while indice_parada < len(paradas_a):
-                                transbordo = paradas_a[indice_parada]
-                                inicio_b = self._buscar_en_lista(
-                                    paradas_b, transbordo
-                                )
-                                posicion_transbordo = self._posicion_estacion(
-                                    transbordo
-                                )
-                                if (
-                                    inicio_b != -1
-                                    and fin_b > inicio_b
-                                    and posicion_transbordo != -1
-                                    and self._abiertas[posicion_transbordo]
-                                ):
-                                    cantidad = (
-                                        indice_parada - inicio_a
-                                        + fin_b - inicio_b
-                                    )
-                                    if mejor_cantidad == -1 or cantidad < mejor_cantidad:
-                                        mejor_cantidad = cantidad
-                                        mejor = [
-                                            [servicio_a[0], transbordo],
-                                            [servicio_b[0], destino],
-                                        ]
-                                indice_parada += 1
-                    indice_b += 1
-            indice_a += 1
-        return mejor
-
-    def _buscar_flujo_estacion(self, estacion):
-        """Búsqueda lineal del prototipo R10 antiguo; no la usa la app."""
-        posicion = 0
-        while posicion < len(self._flujos_estaciones):
-            if self._flujos_estaciones[posicion][0] == estacion:
-                return posicion
-            posicion += 1
-        return -1
-
-    @staticmethod
-    def _contar_cola(cola):
-        """Conteo auxiliar del prototipo R10 antiguo, no del simulador activo."""
-        cantidad = 0
-        for pasajero in cola:
-            cantidad += pasajero[5]
-        return cantidad
-
     def _incremento_hora(self, minuto):
+        """R10: suma los incrementos de demanda activos en el minuto."""
         incremento = 0
         for periodo in self._horas_pico:
             desde = periodo[0]
@@ -1588,6 +1140,7 @@ class Red:
         return incremento
 
     def _validar_estacion_configurable(self, estacion):
+        """R10: valida y normaliza una estación de demanda."""
         nombre = self._normalizar(estacion)
         if self._posicion_estacion(nombre) == -1:
             raise ValueError("La estación indicada no existe.")
@@ -1595,11 +1148,12 @@ class Red:
 
     @staticmethod
     def _validar_cantidad(cantidad, nombre):
+        """R10/R11: exige una cantidad entera no negativa."""
         if not isinstance(cantidad, int) or cantidad < 0:
             raise ValueError(nombre + " debe ser un entero no negativo.")
 
     def buses_rutas(self):
-        """Devuelve los buses de las rutas ordenadas en O(R)."""
+        """R7: devuelve los buses disponibles para seleccionar una ruta."""
         buses = []
         for informacion in self._rutas_info:
             bus = self._nombre_bus(informacion[0])
@@ -1609,11 +1163,7 @@ class Red:
 
     def servicios(self, bus):
         """
-        Devuelve los identificadores direccionales de un bus en O(R).
-
-        El front usa esta lista para que las modificaciones se apliquen a un
-        recorrido concreto; así se pueden mostrar ambos sentidos y editar el
-        servicio elegido sin ambigüedad.
+        R7: devuelve los servicios direccionales de un bus en O(R).
         """
         bus_normalizado = self._normalizar(bus)
         encontrados = []
@@ -1624,7 +1174,7 @@ class Red:
         return encontrados
 
     def estaciones(self):
-        """Devuelve los nombres existentes para los selectores del front: O(n)."""
+        """R7/R8/R10: devuelve los nombres usados en los selectores."""
         nombres = []
         for nombre in self._estaciones:
             nombres.append(nombre)
@@ -1632,12 +1182,9 @@ class Red:
 
     def recorrido(self, ruta, al_reves=False):
         """
-        R7: obtiene una copia del recorrido en el orden solicitado.
+        R7: devuelve una copia del recorrido, en orden normal o inverso.
 
-        `ruta` es el identificador direccional, por ejemplo B74-1. El front
-        consulta el mismo servicio con al_reves=False y True para mostrar ambos
-        sentidos. Complejidad O(R + P); la copia evita que el front modifique
-        directamente las estructuras internas.
+        Cuesta O(R + P); la copia protege la lista interna.
         """
         indice_ruta = self._indice_ruta(ruta)
         if indice_ruta == -1:
@@ -1657,13 +1204,10 @@ class Red:
 
     def agregar_parada(self, ruta, nueva, despues_de):
         """
-        R7: inserta una estación existente entre dos paradas de un servicio.
+        R7: inserta una estación existente dentro de un servicio.
 
-        `despues_de` debe tener una parada siguiente para que la inserción quede
-        entre dos paradas que ya estaban en el recorrido. Buscar servicio,
-        validar estación y reconstruir la lista cuesta O(R + P + log N).
-        El historial guarda referencias a las listas anterior y nueva, sin
-        copiar toda la red (R9). La edición invalida las cachés R6 y R10.
+        Cuesta O(R + P + log N). R9 guarda las listas anterior y nueva;
+        invalida las cachés de R6 y el índice horario de R10.
         """
         indice_ruta = self._indice_ruta(ruta)
         if indice_ruta == -1:
@@ -1702,12 +1246,10 @@ class Red:
 
     def quitar_parada(self, ruta, estacion):
         """
-        R7: elimina una estación de un recorrido sin eliminarla de la red.
+        R7: quita una estación del recorrido, no de la red.
 
-        Complejidad O(R + P): se localiza el servicio y la parada y se reconstruye
-        la lista. R9 conserva referencias a la lista antes y después del cambio.
-        El resto de servicios y la lista maestra de estaciones quedan intactos.
-        La edición invalida las cachés R6 y R10.
+        Cuesta O(R + P). R9 conserva las listas anterior y nueva; invalida
+        las cachés de R6 y el índice horario de R10.
         """
         indice_ruta = self._indice_ruta(ruta)
         if indice_ruta == -1:
@@ -1734,20 +1276,16 @@ class Red:
         self._resultado_r10 = []
 
     def cerrar(self, nombre):
-        """R8: cierra una estación existente y registra el cambio para R9."""
+        """R8/R9: cierra una estación y guarda el cambio para deshacerlo."""
         self._cambiar_estado_estacion(nombre, False)
 
     def reabrir(self, nombre):
-        """R8: reabre una estación existente y registra el cambio para R9."""
+        """R8/R9: reabre una estación y guarda el cambio para deshacerlo."""
         self._cambiar_estado_estacion(nombre, True)
 
     def deshacer(self):
         """
-        R9: aplica la acción inversa más reciente usando una pila LIFO.
-
-        Sacar y mover la acción cuesta O(1) amortizado. Reemplazar un booleano
-        o una referencia a lista también cuesta O(1); R10 invalida sus eventos
-        al cambiar una ruta y los reconstruye al iniciar la siguiente simulación.
+        R9: aplica la última acción de la pila en O(1) amortizado.
         """
         if len(self._historial_deshacer) == 0:
             return False
@@ -1758,7 +1296,7 @@ class Red:
         return True
 
     def rehacer(self):
-        """R9: reaplica la acción más reciente en O(1) amortizado."""
+        """R9: reaplica la última acción de la pila en O(1) amortizado."""
         if len(self._historial_rehacer) == 0:
             return False
 
@@ -1769,20 +1307,10 @@ class Red:
 
     def proximo_bus(self, estacion, bus, hora):
         """
-        R4: busca la siguiente llegada del bus indicado en una estacion.
+        R4: devuelve la próxima llegada del bus a una estación.
 
-        El archivo usa identificadores con sentido, como B74-1 y B74-2,
-        mientras que el usuario puede buscar por el bus base "B74". Se incluyen
-        tanto la coincidencia exacta como sus variantes que terminan en "-...".
-        Los horarios ordenados permiten buscar el primer tiempo >= hora actual.
-
-        Complejidad: O(log b + v*log h), donde b es la cantidad de buses
-        unicos, v las variantes del bus indicado y h las filas de horario.
-        Para cada variante, una busqueda binaria devuelve directamente su
-        primera llegada posible, sin recorrer sus horarios anteriores.
-        Retorna una cadena "HH:MM" o None si no existen buses posteriores.
-        El front llama esta funcion con estacion, bus y hora actual; no busca
-        llegadas por su cuenta.
+        Busca en las listas ordenadas de buses y horarios: O(log B + V log H).
+        Acepta el bus base y sus variantes direccionales.
         """
         estacion_normalizada = self._normalizar(estacion)
         bus_normalizado = self._normalizar(bus)
@@ -1816,31 +1344,10 @@ class Red:
 
     def viaje(self, origen, destino):
         """
-        R5: busca el viaje directo o con un solo transbordo con menos paradas.
+        R5: encuentra el viaje directo o con un transbordo de menos paradas.
 
-        _rutas_info usa una lista por servicio direccional:
-        [id_servicio, [estacion_1, estacion_2, ...]]
-        La funcion compara recorridos directos y pares de servicios que
-        comparten una estacion. El CSV usa id_servicio para separar sentidos;
-        la respuesta convierte ese id en el bus que debe abordar el usuario.
-
-        El resultado, preparado para el front, es una lista de segmentos:
-        [bus, estacion_subida, estacion_bajada]. Los CSV distinguen variantes
-        direccionales como B74-1 y B74-2; el pasajero toma el bus B74, asi que
-        _nombre_bus elimina el sufijo numerico solo al preparar la respuesta.
-        Un viaje directo tiene un segmento y un transbordo tiene dos.
-        Si no hay recorrido posible devuelve [].
-
-        Se comparan todas las opciones directas y con un transbordo, guardando
-        la de menor cantidad total de paradas recorridas. Solo se permite
-        avanzar en el orden de cada servicio direccional.
-
-        Complejidad: O(log n + R^2*P^2 + R^2*P*log n), donde n es el numero
-        de estaciones, R los servicios direccionales y P las paradas maximas
-        por servicio. El ultimo termino corresponde a verificar estaciones de
-        transbordo con estado(), que usa busqueda binaria. Se usan listas
-        simples porque dict/set estan prohibidos; estas conservan el orden del
-        recorrido sin indices auxiliares.
+        Usa listas de paradas en orden de recorrido. Cuesta
+        O(log N + R²P² + R²P log N) y devuelve segmentos para el front.
         """
         origen_normalizado = self._normalizar(origen)
         destino_normalizado = self._normalizar(destino)
@@ -1929,11 +1436,7 @@ class Red:
     @staticmethod
     def _nombre_bus(identificador_servicio):
         """
-        Convierte un servicio direccional como B74-1 en el bus B74.
-
-        Los sufijos no numéricos, como los de identificadores existentes
-        "1-Jan", se conservan completos. Complejidad O(L), donde L es la
-        longitud del identificador.
+        R5/R7: quita el sufijo direccional numérico del identificador.
         """
         separador = identificador_servicio.rfind("-")
         if separador == -1:
@@ -1946,23 +1449,10 @@ class Red:
 
     def ranking(self, k):
         """
-        R6: devuelve las k estaciones abiertas con mas buses diarios.
+        R6: devuelve las k estaciones abiertas con más buses diarios.
 
-        _ranking guarda [nombre, cantidad, indice_estacion], en orden por
-        cantidad descendente y nombre ascendente. El indice permite consultar
-        si la estacion sigue abierta en O(1), sin otra busqueda binaria.
-
-        La reconstruccion cuesta         O(H + R + J log J + U log U + U log N);
-        la consulta revisa M filas hasta reunir k estaciones abiertas: O(M),
-        con O(k) espacio de respuesta. Rechazar k <= 0 cuesta O(1).
-
-        La frecuencia del servicio se estima por su mayor cantidad de horarios
-        en una parada y se asigna a sus paradas actuales, incluidas las nuevas
-        de R7. Cerrar/reabrir filtra el cache en vivo; editar recorridos lo
-        invalida. R10 no lo modifica.         Merge sort ordena las J paradas porque
-        mapas y conjuntos estan prohibidos en el motor.
-        Retorna solamente nombres: [nombre1, nombre2, ...], como espera el
-        front para R6. Los conteos internos siguen disponibles en _ranking.
+        Usa una lista cacheada y ordenada por frecuencia y nombre. Construirla
+        cuesta O(H + R + J log J + U log U + U log N); consultar cuesta O(M).
         """
         if k <= 0:
             return []
@@ -1987,11 +1477,9 @@ class Red:
 
     def _cargar_rutas(self, ruta_archivo):
         """
-        Convierte rutas.csv en [nombre, [paradas ordenadas]].
+        R5–R7/R10: carga las rutas como listas ordenadas de paradas.
 
-        Lee O(q) filas, ordena por ruta y orden con merge sort O(q log q)
-        y agrupa O(q). Es mas simple y rapido que buscar rutas desordenadas
-        durante cada viaje.
+        Ordenar q filas cuesta O(q log q); agruparlas, O(q).
         """
         filas = []
         with open(ruta_archivo, "r", encoding="utf-8-sig", newline="") as archivo:
@@ -2044,10 +1532,7 @@ class Red:
 
     def _cargar_horarios(self, ruta_archivo):
         """
-        Convierte horarios.csv en filas ordenadas por ruta y estacion.
-
-        Cada fila queda como [ruta, estacion, minuto, HH:MM].
-        ordenar por ruta, estacion y minuto permite buscar con binaria O(log h).
+        R4/R6/R10: carga horarios ordenados por ruta, estación y minuto.
         """
         filas = []
         with open(ruta_archivo, "r", encoding="utf-8-sig", newline="") as archivo:
@@ -2087,7 +1572,7 @@ class Red:
         return self._ordenar_horarios(filas)
 
     def _obtener_buses(self):
-        """Crea una lista ordenada de identificadores únicos: O(h)."""
+        """R4/R7: crea la lista ordenada de servicios del archivo horario."""
         buses = []
         for fila in self._horarios:
             if len(buses) == 0 or buses[-1] != fila[0]:
@@ -2096,15 +1581,10 @@ class Red:
 
     def _construir_ranking(self):
         """
-        Estima los buses diarios de cada servicio y los asigna a sus paradas.
+        R6: estima frecuencias por servicio y las agrupa por estación.
 
-        El máximo de horarios por parada representa los viajes diarios del
-        servicio; así, una parada agregada en R7 también hereda su frecuencia.
-        Los servicios y horarios están ordenados, por lo que agruparlos cuesta
-        O(H). Emparejar rutas cuesta O(R); ordenar las J paradas actuales y
-        agruparlas cuesta O(J log J); ordenar el ranking cuesta O(U log U).
-        Esta caché solo se invalida con ediciones de recorrido: R10 no cambia
-        datos ni conteos de R6.
+        Las listas ordenadas permiten agrupar en O(H + R); ordenar y ubicar
+        las paradas cuesta O(J log J + U log N), y ordenar el ranking O(U log U).
         """
         frecuencias_servicio = []
         posicion_horario = 0
@@ -2167,7 +1647,7 @@ class Red:
 
     @classmethod
     def _ordenar_conteos_parada(cls, filas):
-        """Ordena [estacion, frecuencia] por nombre en O(J log J)."""
+        """R6: ordena frecuencias por estación con merge sort, O(J log J)."""
         if len(filas) < 2:
             return filas
 
@@ -2192,35 +1672,8 @@ class Red:
             j += 1
         return resultado
 
-    @classmethod
-    def _ordenar_nombres(cls, nombres):
-        """Ordena nombres para agrupar frecuencias en O(h log h), O(h) espacio."""
-        if len(nombres) < 2:
-            return nombres
-
-        mitad = len(nombres) // 2
-        izquierda = cls._ordenar_nombres(nombres[:mitad])
-        derecha = cls._ordenar_nombres(nombres[mitad:])
-        resultado = []
-        i = 0
-        j = 0
-        while i < len(izquierda) and j < len(derecha):
-            if izquierda[i] <= derecha[j]:
-                resultado.append(izquierda[i])
-                i += 1
-            else:
-                resultado.append(derecha[j])
-                j += 1
-        while i < len(izquierda):
-            resultado.append(izquierda[i])
-            i += 1
-        while j < len(derecha):
-            resultado.append(derecha[j])
-            j += 1
-        return resultado
-
     def _buscar_en_lista(self, valores, valor):
-        """Busca un valor en una secuencia ordenada de ruta en O(P) peor caso."""
+        """R5/R7/R10: busca una parada en una ruta en O(P)."""
         posicion = 0
         while posicion < len(valores):
             if valores[posicion] == valor:
@@ -2229,6 +1682,7 @@ class Red:
         return -1
 
     def _indice_ruta(self, ruta):
+        """R7: obtiene el índice de un servicio direccional en O(R)."""
         identificador = str(ruta).strip()
         posicion = 0
         while posicion < len(self._rutas_info):
@@ -2238,7 +1692,7 @@ class Red:
         return -1
 
     def _cambiar_estado_estacion(self, nombre, abierta):
-        """R8: busca en O(log N); el registro delta de R9 cuesta O(1)."""
+        """R8/R9: cambia el estado con búsqueda O(log N) y registro O(1)."""
         estacion = self._normalizar(nombre)
         posicion = self._posicion_estacion(estacion)
         if posicion == -1:
@@ -2255,12 +1709,12 @@ class Red:
         return True
 
     def _guardar_cambio(self, cambio):
-        """Guarda una acción delta en la pila y descarta la rama de rehacer."""
+        """R9: guarda una acción y descarta la rama de rehacer."""
         self._historial_deshacer.append(cambio)
         self._historial_rehacer = []
 
     def _aplicar_cambio_historial(self, cambio, rehacer):
-        """Aplica una acción delta de R9 en O(1), sin copiar la red."""
+        """R9: aplica una acción guardada sin copiar la red."""
         posicion_valor = 3 if rehacer else 2
         if cambio[0] == "ruta":
             self._rutas_info[cambio[1]][1] = cambio[posicion_valor]
@@ -2271,10 +1725,11 @@ class Red:
         self._resultado_r10 = []
 
     def _invalidar_ranking(self):
-        """Marca R6 para reconstrucción diferida tras una edición de recorrido."""
+        """R6/R7/R9: marca el ranking para reconstruirlo tras editar una ruta."""
         self._ranking_desactualizado = True
 
     def _posicion_estacion(self, estacion):
+        """R4/R6–R8/R10: busca una estación ordenada en O(log N)."""
         inicio = 0
         fin = len(self._estaciones)
         while inicio < fin:
@@ -2288,7 +1743,7 @@ class Red:
         return -1
 
     def _posicion_bus(self, bus):
-        """Busca el inicio del identificador o sus variantes en O(log b)."""
+        """R4: busca un bus y el inicio de sus variantes en O(log B)."""
         inicio = 0
         fin = len(self._buses)
         while inicio < fin:
@@ -2300,7 +1755,7 @@ class Red:
         return inicio
 
     def _posicion_horario(self, ruta, estacion, minuto):
-        # Primera fila que no precede a (ruta, estacion, minuto).
+        """R4: busca con binaria la primera fila desde la hora solicitada."""
         inicio = 0
         fin = len(self._horarios)
         while inicio < fin:
@@ -2325,10 +1780,7 @@ class Red:
     @staticmethod
     def _convertir_hora(hora):
         """
-        Convierte una hora texto a minutos desde 00:00.
-
-        Complejidad O(L), siendo L la longitud del texto. Soporta "9:05",
-        "09:05" y horas con segundos; usa solo metodos str permitidos.
+        R4/R10: convierte HH:MM a minutos desde medianoche en O(L).
         """
         texto = str(hora).strip()
         partes = texto.split(":")
@@ -2346,8 +1798,7 @@ class Red:
     @classmethod
     def _ordenar_rutas(cls, filas):
         """
-        Ordena rutas por nombre y luego por numero de orden.
-        Complejidad O(q log q), memoria auxiliar O(q).
+        R5–R7/R10: ordena filas de ruta con merge sort, O(X log X).
         """
         if len(filas) < 2:
             return filas
@@ -2387,8 +1838,7 @@ class Red:
     @classmethod
     def _ordenar_horarios(cls, filas):
         """
-        Ordena horarios por ruta, estacion y minuto.
-        Complejidad O(h log h), necesaria antes de usar busqueda binaria.
+        R4/R6/R10: ordena horarios para búsquedas binarias, O(H log H).
         """
         if len(filas) < 2:
             return filas
@@ -2430,7 +1880,7 @@ class Red:
 
     @classmethod
     def _ordenar_ranking(cls, filas):
-        """Ordena [estacion, conteo, indice] en O(u log u), espacio O(u)."""
+        """R6: ordena estaciones por conteo y nombre, O(U log U)."""
         if len(filas) < 2:
             return filas
 
@@ -2468,13 +1918,9 @@ class Red:
 
     def estado(self, nombre):
         """
-        R1: consulta si una estacion existe y si esta abierta.
+        R1: devuelve si una estación existe y está abierta.
 
-        Retorna (False, False) si no existe y (True, abierta) si existe.
-        El front usa esta tupla para mostrar el resultado al usuario.
-
-        Complejidad: O(log n), usando busqueda binaria sobre _estaciones.
-        Es mas eficiente que recorrer la lista completa, que seria O(n).
+        Busca en `_estaciones` por binaria: O(log N).
         """
         nombre_normalizado = self._normalizar(nombre)
         posicion = self._posicion_insercion(nombre_normalizado)
@@ -2487,16 +1933,9 @@ class Red:
 
     def autocompletar(self, prefijo, k):
         """
-        R2: devuelve hasta k estaciones abiertas que comienzan por prefijo.
+        R2: devuelve hasta k estaciones abiertas con el prefijo indicado.
 
-        Primero ubica el prefijo con busqueda binaria y luego recorre solamente
-        el tramo que puede coincidir. La lista ya esta en orden alfabetico.
-        El front recibe una lista simple y la muestra como opciones de una barra
-        de busqueda y seleccion.
-
-        Complejidad: O(log n + m), donde m es el numero de estaciones revisadas
-        hasta obtener k resultados o terminar el prefijo. En el mejor caso es
-        O(log n); como maximo puede revisar O(n) cuando casi todas coinciden.
+        Binaria más recorrido de coincidencias: O(log N + M).
         """
         if k <= 0:
             return []
@@ -2517,17 +1956,9 @@ class Red:
 
     def rango(self, desde, hasta):
         """
-        R3: devuelve las estaciones abiertas dentro de un rango alfabetico.
+        R3: devuelve las estaciones abiertas dentro del rango inclusivo.
 
-        Si desde <= hasta, el recorrido es ascendente e inclusivo.
-        Si desde > hasta, la direccion se invierte y el recorrido es descendente
-        e inclusivo. Los extremos pueden ser nombres parciales o inexistentes.
-
-        Complejidad: O(log n + r), donde r es el numero de estaciones ubicadas
-        dentro del rango. La busqueda binaria evita recorrer desde el inicio.
-        Construir la lista de resultados necesariamente cuesta O(r).
-
-        El front llama este metodo y coloca el resultado recibido en el Listbox.
+        Busca el límite por binaria y recorre el rango: O(log N + K_r).
         """
         limite_inferior = self._normalizar(desde)
         limite_superior = self._normalizar(hasta)
@@ -2561,17 +1992,12 @@ class Red:
 
     @staticmethod
     def _normalizar(nombre):
-        # Respecto a n, el numero de estaciones, es O(1): solo procesa un
-        # nombre. Si L es la longitud de ese nombre, trim y upper costean O(L).
-        # Permite que R1, R2 y R3 sean insensibles a mayusculas y espacios.
+        """Compartida: normaliza nombres en O(L) para búsquedas R1–R10."""
         return str(nombre).strip().upper()
 
     def _posicion_insercion(self, nombre):
         """
-        Ubica el primer elemento que no es menor que nombre.
-
-        Implementacion de insertion point con busqueda binaria.
-        Complejidad: O(log n); evita una busqueda lineal en _estaciones.
+        R1–R3: ubica el límite inferior en la lista en O(log N).
         """
         inicio = 0
         fin = len(self._estaciones)
@@ -2588,16 +2014,7 @@ class Red:
     @classmethod
     def _ordenar(cls, estaciones):
         """
-        Ordena una lista mediante merge sort.
-
-        Se uso merge sort en vez de sorted(), list.sort(), min() o max()
-        porque las reglas de motor/ prohiben esas operaciones sobre colecciones.
-        El algoritmo divide la lista y combina cada mitad ordenada.
-
-        Complejidad: O(n log n) en todos los casos, con O(n) de memoria auxiliar
-        durante las combinaciones. Es mas eficiente que un metodo de burbuja,
-        que seria O(n^2), y permite que todas las consultas posteriores sean
-        mas eficientes.
+        R1: ordena estaciones con merge sort en O(N log N) y O(N) espacio.
         """
         if len(estaciones) < 2:
             return estaciones
